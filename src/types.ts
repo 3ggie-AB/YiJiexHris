@@ -9,6 +9,7 @@ export interface AppConfig {
   projectRunCommands: Record<string, string>;
   projectRouteRules: Record<string, ProjectRouteRule[]>;
   projectWebAuth: Record<string, ProjectWebAuthConfig>;
+  projectAliases: Record<string, string>;
   hrisLoginUrl?: string;
   hrisCardsUrl?: string;
   hrisApiMethod: "POST" | "PUT" | "PATCH";
@@ -63,6 +64,7 @@ export interface RepoFileChangeStat {
 
 export interface RepoActivity {
   name: string;
+  displayName?: string;
   path: string;
   branch?: string;
   commitsToday: GitCommit[];

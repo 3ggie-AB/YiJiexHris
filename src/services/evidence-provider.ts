@@ -150,13 +150,15 @@ function getProjectNameFromTitle(title: string): string | undefined {
   return projectName?.trim() || undefined;
 }
 
-function findRepositoryForTitle(title: string, collection: CollectedActivity): RepoActivity | undefined {
+export function findRepositoryForTitle(title: string, collection: CollectedActivity): RepoActivity | undefined {
   const projectName = getProjectNameFromTitle(title)?.toLowerCase();
   if (!projectName) {
     return undefined;
   }
 
-  return collection.repositories.find((repo) => repo.name.toLowerCase() === projectName);
+  return collection.repositories.find(
+    (repo) => repo.name.toLowerCase() === projectName || repo.displayName?.toLowerCase() === projectName,
+  );
 }
 
 function isUiFile(filePath: string | undefined): boolean {

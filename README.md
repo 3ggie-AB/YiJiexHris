@@ -28,6 +28,7 @@ Copy `.env.example` menjadi `.env`, lalu isi:
 - `PROJECT_REPOS` atau `PROJECTS_BASE_DIRS`
 - `PROJECT_PREVIEW_URLS_JSON` jika ingin screenshot halaman project
 - `PROJECT_RUN_COMMANDS_JSON` jika project perlu dijalankan dulu sebelum di-screenshot
+- `PROJECT_ALIASES_JSON` opsional, untuk mengganti nama repo/path jadi nama project yang lebih rapi di report & card HRIS
 - `PROJECT_ROUTE_RULES_JSON` opsional, hanya kalau hasil analisa route otomatis mau dioverride manual
 - `PROJECT_WEB_AUTH_JSON` opsional, kalau project Laravel/web harus login dulu sebelum screenshot halaman
 - `HRIS_LOGIN_URL`
@@ -106,6 +107,18 @@ Untuk production Windows, kalau mau lebih stabil, jalankan command ini via Task 
 - Checklist outgoing dipaksa `yes` semua dan akan mengirim `checklists[n][id]` kalau kamu isi `id` di `HRIS_CARD_CHECKLISTS_JSON`.
 - Kalau `PROJECT_ROUTE_RULES_JSON` kosong, tool akan analisa route dari file yang berubah, struktur view/pages, dan file `routes/*.php`. Isi env itu hanya kalau kamu mau override manual.
 - Kalau halaman preview butuh auth, isi `PROJECT_WEB_AUTH_JSON`. Tool akan buka login page, isi form, submit, lalu pindah ke route task sebelum ambil screenshot.
+- Kalau nama project di card masih berupa nama folder/path mentah, isi `PROJECT_ALIASES_JSON`.
+
+Contoh alias:
+
+```json
+{
+  "D:/sci/erp_2023": "Dashboard ERP",
+  "Smart-School-NEW": "Smart School",
+  "Kodinggggggggggggg": "Backend Kompetiva",
+  "api_erp": "API ERP GO"
+}
+```
 
 Contoh:
 

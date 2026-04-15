@@ -185,6 +185,29 @@ function parseProjectWebAuth(raw: string | undefined): Record<string, ProjectWeb
   return output;
 }
 
+function normalizeAliasKey(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function parseProjectAliases(raw: string | undefined): Record<string, string> {
+  if (!raw?.trim()) {
+    return {};
+  }
+
+  const parsed = parseJsonEnv(raw, "PROJECT_ALIASES_JSON");
+  const output: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`PROJECT_ALIASES_JSON value for "${key}" must be a non-empty string.`);
+    }
+
+    output[normalizeAliasKey(key)] = value.trim();
+  }
+
+  return output;
+}
+
 export function loadConfig(): AppConfig {
   const projectRepos = parseListEnv(process.env.PROJECT_REPOS).map((item) => path.resolve(item));
   const projectBaseDirs = parseListEnv(process.env.PROJECTS_BASE_DIRS).map((item) => path.resolve(item));
@@ -214,6 +237,7 @@ export function loadConfig(): AppConfig {
     ),
     projectRouteRules: parseProjectRouteRules(process.env.PROJECT_ROUTE_RULES_JSON),
     projectWebAuth: parseProjectWebAuth(process.env.PROJECT_WEB_AUTH_JSON),
+    projectAliases: parseProjectAliases(process.env.PROJECT_ALIASES_JSON),
     hrisLoginUrl: process.env.HRIS_LOGIN_URL?.trim() || undefined,
     hrisCardsUrl: process.env.HRIS_CARDS_URL?.trim() || process.env.HRIS_API_URL?.trim() || undefined,
     hrisApiMethod: parseHrisMethod(process.env.HRIS_API_METHOD),

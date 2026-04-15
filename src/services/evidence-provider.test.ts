@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { AppConfig, RepoActivity } from "../types";
-import { inferRoutePathFromFile, pickRelevantFile, resolveEvidenceUrl } from "./evidence-provider";
+import { findRepositoryForTitle, inferRoutePathFromFile, pickRelevantFile, resolveEvidenceUrl } from "./evidence-provider";
 
 const tempDirs: string[] = [];
 
@@ -59,6 +59,40 @@ test("pickRelevantFile prefers file with biggest relevant code change", () => {
   );
 });
 
+test("findRepositoryForTitle can resolve repository from aliased project title", () => {
+  const repo: RepoActivity = {
+    name: "Smart-School-NEW",
+    displayName: "Smart School",
+    path: "D:/makannnnnnnn/Smart-School-NEW",
+    branch: "main",
+    commitsToday: [],
+    committedFilesToday: [],
+    workingTreeFiles: [],
+    fileChangeStats: [],
+    isDirty: false,
+    errors: [],
+  };
+
+  expect(
+    findRepositoryForTitle("Smart School : Mengubah View Tabel Murid", {
+      generatedAt: "2026-04-15T00:00:00.000Z",
+      reportDate: "2026-04-15",
+      timezone: "Asia/Jakarta",
+      repositories: [repo],
+      metrics: {
+        projectCount: 1,
+        activeProjectCount: 1,
+        reposWithCommitsToday: 0,
+        dirtyRepoCount: 0,
+        totalCommits: 0,
+        totalCommittedFiles: 0,
+        totalWorkingTreeFiles: 0,
+        uniqueFilesTouched: 0,
+      },
+    }),
+  ).toEqual(repo);
+});
+
 test("resolveEvidenceUrl prefers explicit route rules over inferred route", async () => {
   const repo: RepoActivity = {
     name: "Smart-School-NEW",
@@ -95,6 +129,7 @@ test("resolveEvidenceUrl prefers explicit route rules over inferred route", asyn
       "Smart-School-NEW": [{ match: "murid tabel", path: "/murid" }],
     },
     projectWebAuth: {},
+    projectAliases: {},
     hrisLoginUrl: undefined,
     hrisCardsUrl: undefined,
     hrisApiMethod: "POST",
@@ -175,6 +210,7 @@ test("resolveEvidenceUrl can analyze repo routes when env rules are empty", asyn
     projectRunCommands: {},
     projectRouteRules: {},
     projectWebAuth: {},
+    projectAliases: {},
     hrisLoginUrl: undefined,
     hrisCardsUrl: undefined,
     hrisApiMethod: "POST",
