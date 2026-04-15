@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { AppConfig, RepoActivity } from "../types";
-import { inferRoutePathFromFile, pickRelevantFile, resolveEvidenceUrl } from "./evidence-provider";
+import { findRepositoryForTitle, inferRoutePathFromFile, pickRelevantFile, resolveEvidenceUrl } from "./evidence-provider";
 
 const tempDirs: string[] = [];
 
@@ -57,6 +57,40 @@ test("pickRelevantFile prefers file with biggest relevant code change", () => {
   expect(pickRelevantFile("ERP : Membuat File Migration untuk Menambahkan Kolom di Tabel Task", repo)).toBe(
     "database/migrations/2026_04_13_add_certificate_to_projects_table.php",
   );
+});
+
+test("findRepositoryForTitle can resolve repository from aliased project title", () => {
+  const repo: RepoActivity = {
+    name: "Smart-School-NEW",
+    displayName: "Smart School",
+    path: "D:/makannnnnnnn/Smart-School-NEW",
+    branch: "main",
+    commitsToday: [],
+    committedFilesToday: [],
+    workingTreeFiles: [],
+    fileChangeStats: [],
+    isDirty: false,
+    errors: [],
+  };
+
+  expect(
+    findRepositoryForTitle("Smart School : Mengubah View Tabel Murid", {
+      generatedAt: "2026-04-15T00:00:00.000Z",
+      reportDate: "2026-04-15",
+      timezone: "Asia/Jakarta",
+      repositories: [repo],
+      metrics: {
+        projectCount: 1,
+        activeProjectCount: 1,
+        reposWithCommitsToday: 0,
+        dirtyRepoCount: 0,
+        totalCommits: 0,
+        totalCommittedFiles: 0,
+        totalWorkingTreeFiles: 0,
+        uniqueFilesTouched: 0,
+      },
+    }),
+  ).toEqual(repo);
 });
 
 test("resolveEvidenceUrl prefers explicit route rules over inferred route", async () => {
