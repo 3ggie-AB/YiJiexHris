@@ -1,0 +1,13 @@
+{
+  "name": "yijiex-hris-auto-analyzer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "collect": "bun src/index.ts collect",
+    "analyze": "bun src/index.ts analyze",
+    "send": "bun src/index.ts send",
+    "run": "bun src/index.ts run",
+    "schedule": "bun src/index.ts schedule",
+    "test": "bun test"
+  }
+}
