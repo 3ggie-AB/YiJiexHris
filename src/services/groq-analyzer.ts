@@ -108,6 +108,10 @@ function touchedFileCount(repo: RepoActivity): number {
   ]).size;
 }
 
+function getProjectLabel(repo: RepoActivity): string {
+  return repo.displayName || repo.name;
+}
+
 function truncateList(items: string[], max: number): string[] {
   if (items.length <= max) {
     return items;
@@ -158,7 +162,8 @@ function formatRepoContext(repo: RepoActivity, config: AppConfig): string {
   const errorLines = repo.errors.length > 0 ? repo.errors.map((error) => `- ${error}`).join("\n") : "- none";
 
   return [
-    `Project: ${repo.name}`,
+    `Project: ${getProjectLabel(repo)}`,
+    `Project key: ${repo.name}`,
     `Path: ${repo.path}`,
     `Branch: ${repo.branch ?? "-"}`,
     `Dirty: ${repo.isDirty ? "yes" : "no"}`,
@@ -220,7 +225,13 @@ function normalizeProjectInsights(
   projectInsights: ProjectInsight[],
   collection: CollectedActivity,
 ): ProjectInsight[] {
-  const lookup = new Map(collection.repositories.map((repo) => [repo.name, repo] as const));
+  const lookup = new Map<string, RepoActivity>();
+  for (const repo of collection.repositories) {
+    lookup.set(repo.name, repo);
+    if (repo.displayName) {
+      lookup.set(repo.displayName, repo);
+    }
+  }
 
   return projectInsights.map((item) => {
     const repo = lookup.get(item.project);

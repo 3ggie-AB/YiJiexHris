@@ -17,6 +17,10 @@ interface GitCommandResult {
   stderr: string;
 }
 
+function normalizeAliasKey(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
 function runGit(repoPath: string, args: string[]): GitCommandResult {
   const result = Bun.spawnSync(["git", "-C", repoPath, ...args], {
     stdout: "pipe",
@@ -164,9 +168,26 @@ function mergeFileChangeStats(...groups: RepoFileChangeStat[][]): RepoFileChange
   return Array.from(output.values()).sort((left, right) => right.changeCount - left.changeCount);
 }
 
-function collectRepository(repoPath: string): RepoActivity {
+function resolveRepoDisplayName(repoPath: string, aliases: Record<string, string>): string | undefined {
+  const resolvedPath = path.resolve(repoPath);
+  const repoName = path.basename(resolvedPath);
+  const candidates = [resolvedPath, repoPath, repoName];
+
+  for (const candidate of candidates) {
+    const alias = aliases[normalizeAliasKey(candidate)];
+    if (alias) {
+      return alias;
+    }
+  }
+
+  return undefined;
+}
+
+function collectRepository(repoPath: string, config: AppConfig): RepoActivity {
   const errors: string[] = [];
-  const name = path.basename(repoPath);
+  const resolvedPath = path.resolve(repoPath);
+  const name = path.basename(resolvedPath);
+  const displayName = resolveRepoDisplayName(repoPath, config.projectAliases);
 
   const branch = runGit(repoPath, ["branch", "--show-current"]);
   if (!branch.ok && branch.stderr) {
@@ -215,6 +236,7 @@ function collectRepository(repoPath: string): RepoActivity {
 
   return {
     name,
+    displayName,
     path: repoPath,
     branch: branch.stdout || undefined,
     commitsToday: parseCommits(commits.stdout),
@@ -238,7 +260,7 @@ export async function collectActivity(config: AppConfig): Promise<CollectedActiv
   }
 
   const reportDate = getLocalReportDate();
-  const repoActivities = repositories.map((repoPath) => collectRepository(repoPath));
+  const repoActivities = repositories.map((repoPath) => collectRepository(repoPath, config));
   const activeRepositories = repoActivities.filter(
     (repo) => repo.commitsToday.length > 0 || repo.workingTreeFiles.length > 0,
   );

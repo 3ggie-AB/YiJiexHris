@@ -81,7 +81,7 @@ export function printCollectionSummary(collection: CollectedActivity): void {
       ...repo.workingTreeFiles.map((file) => file.path),
     ]).size;
     console.log(
-      `- ${repo.name}: commits=${repo.commitsToday.length}, touched_files=${touchedFiles}, dirty=${repo.isDirty ? "yes" : "no"}`,
+      `- ${repo.displayName || repo.name}: commits=${repo.commitsToday.length}, touched_files=${touchedFiles}, dirty=${repo.isDirty ? "yes" : "no"}`,
     );
   }
 }

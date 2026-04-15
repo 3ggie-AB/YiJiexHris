@@ -39,6 +39,10 @@ function normalizeFilePath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/^\.\//, "").trim();
 }
 
+function getProjectLabel(repo: RepoActivity): string {
+  return repo.displayName || repo.name;
+}
+
 function toTitleWords(raw: string): string {
   const normalized = raw
     .replace(/(\.blade)?\.[^.]+$/gi, "")
@@ -120,46 +124,46 @@ function buildFileActivity(repo: RepoActivity, filePath: string): string | undef
   if (/(^|\/)database\/migrations?\//i.test(lower) || /(^|\/)migrations?\//i.test(lower)) {
     const migrationName = stem.replace(/^\d{4}_\d{2}_\d{2}_\d{6}_/, "");
     const label = toTitleWords(migrationName);
-    return label ? `${repo.name} : Menambahkan Migrasi ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Menambahkan Migrasi ${label}` : undefined;
   }
 
   if (/\.blade\.php$/i.test(lower) || /(^|\/)views?\//i.test(lower)) {
     const label = buildViewLabel(parts);
-    return label ? `${repo.name} : Memperbarui View ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Memperbarui View ${label}` : undefined;
   }
 
   if (/(^|\/)controllers?\//i.test(lower) || /controller/i.test(fileName)) {
     const label = stripTrailingKeyword(toTitleWords(stem), "Controller");
-    return label ? `${repo.name} : Memperbarui Controller ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Memperbarui Controller ${label}` : undefined;
   }
 
   if (/(^|\/)handlers?\//i.test(lower) || /handler/i.test(fileName)) {
     const label = stripTrailingKeyword(toTitleWords(stem), "Handler");
-    return label ? `${repo.name} : Memperbarui Handler ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Memperbarui Handler ${label}` : undefined;
   }
 
   if (/(^|\/)services?\//i.test(lower) || /service/i.test(fileName)) {
     const label = stripTrailingKeyword(toTitleWords(stem), "Service");
-    return label ? `${repo.name} : Memperbarui Service ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Memperbarui Service ${label}` : undefined;
   }
 
   if (/(^|\/)models?\//i.test(lower) || /model/i.test(fileName)) {
     const label = stripTrailingKeyword(toTitleWords(stem), "Model");
-    return label ? `${repo.name} : Memperbarui Model ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Memperbarui Model ${label}` : undefined;
   }
 
   if (/(^|\/)helpers?\//i.test(lower) || /helper/i.test(fileName)) {
     const label = stripTrailingKeyword(toTitleWords(stem), "Helper");
-    return label ? `${repo.name} : Menyesuaikan Helper ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Menyesuaikan Helper ${label}` : undefined;
   }
 
   if (/(^|\/)routes?\//i.test(lower)) {
     const label = toTitleWords(stem);
-    return label ? `${repo.name} : Menyesuaikan Route ${label}` : undefined;
+    return label ? `${getProjectLabel(repo)} : Menyesuaikan Route ${label}` : undefined;
   }
 
   const fallback = toTitleWords(stem);
-  return fallback ? `${repo.name} : Memperbarui ${fallback}` : undefined;
+  return fallback ? `${getProjectLabel(repo)} : Memperbarui ${fallback}` : undefined;
 }
 
 function normalizeActivityKey(value: string): string {
@@ -231,7 +235,7 @@ function buildSupplementalActivities(collection: CollectedActivity): string[] {
       seen.add(key);
       output.push(candidate);
 
-      if (output.filter((item) => item.startsWith(`${repo.name} : `)).length >= maxPerRepo) {
+      if (output.filter((item) => item.startsWith(`${getProjectLabel(repo)} : `)).length >= maxPerRepo) {
         break;
       }
     }
