@@ -36,6 +36,15 @@ function parseEvidenceMode(raw: string | undefined): AppConfig["hrisEvidenceMode
   throw new Error(`HRIS_EVIDENCE_MODE must be none, auto, code, or url. Received "${raw}".`);
 }
 
+function parseCodeScreenshotStyle(raw: string | undefined): AppConfig["hrisCodeScreenshotStyle"] {
+  const style = raw?.trim().toLowerCase() || "ray";
+  if (style === "legacy" || style === "ray") {
+    return style;
+  }
+
+  throw new Error(`HRIS_CODE_SCREENSHOT_STYLE must be legacy or ray. Received "${raw}".`);
+}
+
 function parseOptionalPositiveInteger(raw: string | undefined): number | undefined {
   if (!raw?.trim()) {
     return undefined;
@@ -267,6 +276,8 @@ export function loadConfig(): AppConfig {
     hrisEvidenceMode: parseEvidenceMode(process.env.HRIS_EVIDENCE_MODE),
     hrisEvidenceDir: process.env.HRIS_EVIDENCE_DIR?.trim() || "./reports/evidence",
     hrisBrowserPath: process.env.HRIS_BROWSER_PATH?.trim() || undefined,
+    hrisCodeScreenshotStyle: parseCodeScreenshotStyle(process.env.HRIS_CODE_SCREENSHOT_STYLE),
+    hrisCodeScreenshotStrict: parseBooleanEnv(process.env.HRIS_CODE_SCREENSHOT_STRICT, false),
     hrisDevServerWaitMs: Math.max(1000, parseNumberEnv(process.env.HRIS_DEV_SERVER_WAIT_MS, 12000)),
     hrisEmployeeId: process.env.HRIS_EMPLOYEE_ID?.trim() || undefined,
     outputDir: process.env.OUTPUT_DIR?.trim() || "./reports",

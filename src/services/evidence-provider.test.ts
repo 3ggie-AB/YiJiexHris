@@ -61,6 +61,130 @@ test("pickRelevantFile prefers file with biggest relevant code change", () => {
   );
 });
 
+test("pickRelevantFile scopes selection to the most relevant commit when activity matches commit subject", () => {
+  const repo: RepoActivity = {
+    name: "Smart-School-NEW",
+    displayName: "Smart School",
+    path: "D:/projects/Smart-School-NEW",
+    branch: "main",
+    commitsToday: [
+      {
+        hash: "webpush",
+        shortHash: "webpush",
+        author: "User",
+        committedAt: "2026-04-17T10:00:00+07:00",
+        subject: "WebPush and Notification",
+      },
+      {
+        hash: "ppdb",
+        shortHash: "ppdb",
+        author: "User",
+        committedAt: "2026-04-17T11:00:00+07:00",
+        subject: "Fix Nama PPDB",
+      },
+    ],
+    commitDetails: [
+      {
+        hash: "webpush",
+        shortHash: "webpush",
+        author: "User",
+        committedAt: "2026-04-17T10:00:00+07:00",
+        subject: "WebPush and Notification",
+        files: [
+          "app/Services/BrowserPushNotificationService.php",
+          "resources/views/dash/menu/browser-notifications/index.blade.php",
+        ],
+        fileChangeStats: [
+          {
+            path: "app/Services/BrowserPushNotificationService.php",
+            additions: 303,
+            deletions: 0,
+            changeCount: 303,
+            sources: ["committed"],
+          },
+          {
+            path: "resources/views/dash/menu/browser-notifications/index.blade.php",
+            additions: 278,
+            deletions: 0,
+            changeCount: 278,
+            sources: ["committed"],
+          },
+        ],
+        diffStats: "2 files changed",
+      },
+      {
+        hash: "ppdb",
+        shortHash: "ppdb",
+        author: "User",
+        committedAt: "2026-04-17T11:00:00+07:00",
+        subject: "Fix Nama PPDB",
+        files: ["app/Helpers/helpers.php", "resources/views/dash/menu/ppdb.blade.php"],
+        fileChangeStats: [
+          {
+            path: "app/Helpers/helpers.php",
+            additions: 9,
+            deletions: 0,
+            changeCount: 9,
+            sources: ["committed"],
+          },
+          {
+            path: "resources/views/dash/menu/ppdb.blade.php",
+            additions: 3,
+            deletions: 3,
+            changeCount: 6,
+            sources: ["committed"],
+          },
+        ],
+        diffStats: "2 files changed",
+      },
+    ],
+    committedFilesToday: [
+      "app/Services/BrowserPushNotificationService.php",
+      "resources/views/dash/menu/browser-notifications/index.blade.php",
+      "app/Helpers/helpers.php",
+      "resources/views/dash/menu/ppdb.blade.php",
+    ],
+    workingTreeFiles: [],
+    workingTreeFileChangeStats: [],
+    fileChangeStats: [
+      {
+        path: "app/Services/BrowserPushNotificationService.php",
+        additions: 303,
+        deletions: 0,
+        changeCount: 303,
+        sources: ["committed"],
+      },
+      {
+        path: "resources/views/dash/menu/browser-notifications/index.blade.php",
+        additions: 278,
+        deletions: 0,
+        changeCount: 278,
+        sources: ["committed"],
+      },
+      {
+        path: "app/Helpers/helpers.php",
+        additions: 9,
+        deletions: 0,
+        changeCount: 9,
+        sources: ["committed"],
+      },
+      {
+        path: "resources/views/dash/menu/ppdb.blade.php",
+        additions: 3,
+        deletions: 3,
+        changeCount: 6,
+        sources: ["committed"],
+      },
+    ],
+    isDirty: false,
+    errors: [],
+  };
+
+  expect(pickRelevantFile("Smart School : Perbaiki label PPDB pada menu dashboard", repo)).toBe(
+    "resources/views/dash/menu/ppdb.blade.php",
+  );
+});
+
 test("findRepositoryForTitle can resolve repository from aliased project title", () => {
   const repo: RepoActivity = {
     name: "Smart-School-NEW",
@@ -156,6 +280,8 @@ test("resolveEvidenceUrl prefers explicit route rules over inferred route", asyn
     hrisEvidenceMode: "auto",
     hrisEvidenceDir: "./reports/evidence",
     hrisBrowserPath: undefined,
+    hrisCodeScreenshotStyle: "ray",
+    hrisCodeScreenshotStrict: false,
     hrisDevServerWaitMs: 12000,
     hrisEmployeeId: undefined,
     outputDir: "./reports",
@@ -243,6 +369,8 @@ test("resolveEvidenceUrl can analyze repo routes when env rules are empty", asyn
     hrisEvidenceMode: "auto",
     hrisEvidenceDir: "./reports/evidence",
     hrisBrowserPath: undefined,
+    hrisCodeScreenshotStyle: "ray",
+    hrisCodeScreenshotStrict: false,
     hrisDevServerWaitMs: 12000,
     hrisEmployeeId: undefined,
     outputDir: "./reports",

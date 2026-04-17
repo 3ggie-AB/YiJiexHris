@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type {
   AppConfig,
@@ -9,6 +10,7 @@ import type {
   ProjectRouteRule,
   ProjectWebAuthConfig,
   RepoActivity,
+  RepoCommitDetail,
 } from "../types";
 
 const UI_KEYWORDS = [
@@ -76,6 +78,38 @@ const ROUTE_FILE_REGEXES = [
   /Route::prefix\s*\(\s*(['"`])([^'"`]+)\1/gi,
 ] as const;
 
+const ACTIVITY_STOP_WORDS = new Set([
+  "mengimplementasikan",
+  "implementasi",
+  "menambahkan",
+  "memperbarui",
+  "menyesuaikan",
+  "memperbaiki",
+  "membuat",
+  "fitur",
+  "layanan",
+  "service",
+  "controller",
+  "handler",
+  "route",
+  "routes",
+  "view",
+  "menu",
+  "dashboard",
+  "halaman",
+  "tampilan",
+  "sistem",
+  "pembuatan",
+  "update",
+  "fix",
+  "dan",
+  "untuk",
+  "pada",
+  "yang",
+  "dengan",
+  "serta",
+]);
+
 interface RouteCandidate {
   path: string;
   hint: string;
@@ -92,6 +126,96 @@ interface ResolvedProjectWebAuthConfig extends ProjectWebAuthConfig {
   loginUrl: string;
   password: string;
 }
+
+interface CodeSnippetLine {
+  lineNumber: number;
+  text: string;
+  html: string;
+  isFocus: boolean;
+}
+
+interface CodeSnippet {
+  fileName: string;
+  languageLabel: string;
+  title: string;
+  lines: CodeSnippetLine[];
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+const CODE_SCREENSHOT_KEYWORDS = new Set([
+  "if",
+  "else",
+  "elseif",
+  "for",
+  "foreach",
+  "while",
+  "do",
+  "switch",
+  "case",
+  "break",
+  "continue",
+  "default",
+  "return",
+  "import",
+  "export",
+  "from",
+  "class",
+  "struct",
+  "interface",
+  "type",
+  "enum",
+  "function",
+  "fn",
+  "const",
+  "let",
+  "var",
+  "new",
+  "await",
+  "async",
+  "try",
+  "catch",
+  "finally",
+  "throw",
+  "extends",
+  "implements",
+  "public",
+  "private",
+  "protected",
+  "static",
+  "readonly",
+  "final",
+  "namespace",
+  "use",
+  "trait",
+  "match",
+  "yield",
+  "echo",
+  "null",
+  "true",
+  "false",
+  "view",
+  "route",
+]);
+
+const CODE_SCREENSHOT_TYPES = new Set([
+  "string",
+  "int",
+  "float",
+  "bool",
+  "array",
+  "object",
+  "void",
+  "mixed",
+  "self",
+  "parent",
+  "static",
+  "response",
+  "request",
+  "jsonresponse",
+  "collection",
+  "builder",
+]);
 
 function toEncodedPowerShell(script: string): string {
   return Buffer.from(script, "utf16le").toString("base64");
@@ -148,6 +272,15 @@ function cleanRouteSegment(segment: string): string {
 function getProjectNameFromTitle(title: string): string | undefined {
   const [projectName] = title.split(" : ");
   return projectName?.trim() || undefined;
+}
+
+function getActivitySubject(title: string): string {
+  const separatorIndex = title.indexOf(" : ");
+  return separatorIndex === -1 ? title : title.slice(separatorIndex + 3);
+}
+
+function getActivityTokens(title: string): string[] {
+  return buildSearchTokens(getActivitySubject(title)).filter((token) => !ACTIVITY_STOP_WORDS.has(token));
 }
 
 export function findRepositoryForTitle(title: string, collection: CollectedActivity): RepoActivity | undefined {
@@ -210,13 +343,13 @@ function scoreFileForActivity(activity: string, filePath: string): number {
     }
   }
 
-  const tokens = lowerActivity.split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
+  const tokens = getActivityTokens(activity);
   for (const token of tokens) {
     if (lowerPath.includes(token)) {
-      score += 3;
+      score += 6;
     }
     if (baseName.includes(token)) {
-      score += 4;
+      score += 8;
     }
   }
 
@@ -249,6 +382,76 @@ function scoreFileForActivity(activity: string, filePath: string): number {
   return score;
 }
 
+function scoreCommitForActivity(activity: string, commit: RepoCommitDetail): number {
+  const activityTokens = getActivityTokens(activity);
+  if (activityTokens.length === 0) {
+    return 0;
+  }
+
+  const subjectTokens = buildSearchTokens(commit.subject).filter((token) => !ACTIVITY_STOP_WORDS.has(token));
+  let score = 0;
+
+  for (const token of activityTokens) {
+    if (subjectTokens.includes(token)) {
+      score += 18;
+    }
+  }
+
+  for (const filePath of commit.files) {
+    const lowerPath = normalizePathSlashes(filePath).toLowerCase();
+    for (const token of activityTokens) {
+      if (lowerPath.includes(token)) {
+        score += 5;
+      }
+    }
+  }
+
+  return score;
+}
+
+function buildTouchedFileMap(repo: RepoActivity): Map<string, number> {
+  const touchedFiles = new Map<string, number>();
+
+  for (const filePath of [...repo.workingTreeFiles.map((file) => file.path), ...repo.committedFilesToday]) {
+    touchedFiles.set(normalizePathSlashes(filePath), getFileChangeCount(repo, filePath));
+  }
+
+  for (const fileStat of repo.fileChangeStats) {
+    const normalizedPath = normalizePathSlashes(fileStat.path);
+    const current = touchedFiles.get(normalizedPath) ?? 0;
+    touchedFiles.set(normalizedPath, Math.max(current, fileStat.changeCount));
+  }
+
+  return touchedFiles;
+}
+
+function getCandidateFilesForActivity(title: string, repo: RepoActivity): Map<string, number> {
+  const touchedFiles = buildTouchedFileMap(repo);
+  const commitDetails = repo.commitDetails ?? [];
+
+  if (commitDetails.length === 0) {
+    return touchedFiles;
+  }
+
+  const rankedCommit = commitDetails
+    .map((commit) => ({
+      commit,
+      score: scoreCommitForActivity(title, commit),
+    }))
+    .sort((left, right) => right.score - left.score)[0];
+
+  if (!rankedCommit || rankedCommit.score < 18) {
+    return touchedFiles;
+  }
+
+  const scopedFiles = new Map<string, number>();
+  for (const fileStat of rankedCommit.commit.fileChangeStats) {
+    scopedFiles.set(normalizePathSlashes(fileStat.path), fileStat.changeCount);
+  }
+
+  return scopedFiles.size > 0 ? scopedFiles : touchedFiles;
+}
+
 function getFileChangeCount(repo: RepoActivity, filePath: string): number {
   return repo.fileChangeStats.find((item) => normalizePathSlashes(item.path) === normalizePathSlashes(filePath))?.changeCount ?? 0;
 }
@@ -258,19 +461,12 @@ export function pickRelevantFile(title: string, repo: RepoActivity | undefined):
     return undefined;
   }
 
-  const touchedFiles = new Map<string, number>();
-  for (const filePath of [...repo.workingTreeFiles.map((file) => file.path), ...repo.committedFilesToday]) {
-    touchedFiles.set(normalizePathSlashes(filePath), getFileChangeCount(repo, filePath));
-  }
-  for (const fileStat of repo.fileChangeStats) {
-    const current = touchedFiles.get(normalizePathSlashes(fileStat.path)) ?? 0;
-    touchedFiles.set(normalizePathSlashes(fileStat.path), Math.max(current, fileStat.changeCount));
-  }
+  const touchedFiles = getCandidateFilesForActivity(title, repo);
 
   const sorted = Array.from(touchedFiles.entries())
     .map(([filePath, changeCount]) => ({
       filePath,
-      score: scoreFileForActivity(title, filePath) + Math.min(60, changeCount),
+      score: scoreFileForActivity(title, filePath) + Math.min(45, changeCount),
       changeCount,
     }))
     .sort((left, right) => right.score - left.score || right.changeCount - left.changeCount);
@@ -865,7 +1061,476 @@ async function saveCdpScreenshot(session: CdpSession, outputFilePath: string): P
   return fileExists(outputFilePath);
 }
 
-async function captureCodeScreenshot(
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getLanguageLabel(sourceFilePath: string): string {
+  const normalized = sourceFilePath.toLowerCase();
+  if (normalized.endsWith(".blade.php")) {
+    return "Blade / PHP";
+  }
+
+  const extension = path.extname(normalized);
+  switch (extension) {
+    case ".php":
+      return "PHP";
+    case ".ts":
+      return "TypeScript";
+    case ".tsx":
+      return "TSX";
+    case ".js":
+      return "JavaScript";
+    case ".jsx":
+      return "JSX";
+    case ".vue":
+      return "Vue";
+    case ".sql":
+      return "SQL";
+    case ".json":
+      return "JSON";
+    case ".css":
+      return "CSS";
+    case ".html":
+      return "HTML";
+    default:
+      return extension ? extension.replace(/^\./, "").toUpperCase() : "CODE";
+  }
+}
+
+function findSnippetWindow(lines: string[], cardTitle: string): { start: number; end: number; focusIndexes: Set<number> } {
+  const tokens = buildSearchTokens(cardTitle).filter((token) => token.length >= 4).slice(0, 8);
+  let matchIndex = -1;
+  const focusIndexes = new Set<number>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const lowerLine = lines[index]?.toLowerCase() ?? "";
+    const matched = tokens.some((token) => lowerLine.includes(token));
+    if (!matched) {
+      continue;
+    }
+
+    if (matchIndex === -1) {
+      matchIndex = index;
+    }
+    focusIndexes.add(index);
+  }
+
+  if (matchIndex === -1) {
+    matchIndex = Math.min(15, Math.max(0, lines.length - 1));
+    focusIndexes.add(matchIndex);
+  }
+
+  const maxSnippetLines = 22;
+  let start = Math.max(0, matchIndex - 8);
+  const end = Math.min(lines.length, start + maxSnippetLines);
+  start = Math.max(0, end - maxSnippetLines);
+
+  return {
+    start,
+    end,
+    focusIndexes,
+  };
+}
+
+function isIdentifierStart(char: string): boolean {
+  return /[A-Za-z_$]/.test(char);
+}
+
+function isIdentifierPart(char: string): boolean {
+  return /[A-Za-z0-9_$-]/.test(char);
+}
+
+function isDigit(char: string): boolean {
+  return /[0-9]/.test(char);
+}
+
+function classifyWordToken(word: string, line: string, startIndex: number): string {
+  const lowerWord = word.toLowerCase();
+  const trimmedLeft = line.slice(0, startIndex).trimEnd();
+  const nextNonWhitespace = line.slice(startIndex + word.length).match(/\S/)?.[0];
+  const previousChar = trimmedLeft.at(-1) ?? "";
+
+  if (CODE_SCREENSHOT_KEYWORDS.has(lowerWord)) {
+    return "keyword";
+  }
+
+  if (CODE_SCREENSHOT_TYPES.has(lowerWord) || /^[A-Z][A-Za-z0-9_]*$/.test(word)) {
+    return "type";
+  }
+
+  if ((previousChar === "<" || trimmedLeft.endsWith("</")) && /^[A-Za-z]/.test(word)) {
+    return "tag";
+  }
+
+  if (nextNonWhitespace === "=" && previousChar !== ".") {
+    return "attribute";
+  }
+
+  if (nextNonWhitespace === "(") {
+    return "function";
+  }
+
+  return "plain";
+}
+
+function renderToken(text: string, type: string): string {
+  const content = escapeHtml(text);
+  if (type === "plain") {
+    return content;
+  }
+
+  return `<span class="token-${type}">${content}</span>`;
+}
+
+function highlightCodeLine(line: string): string {
+  const normalized = line.replace(/\t/g, "  ");
+  let index = 0;
+  let output = "";
+
+  while (index < normalized.length) {
+    const rest = normalized.slice(index);
+
+    if (rest.startsWith("//") || rest.startsWith("#") || rest.startsWith("<!--")) {
+      output += renderToken(rest, "comment");
+      break;
+    }
+
+    if (rest.startsWith("--") && /^\s*--/.test(normalized.slice(index))) {
+      output += renderToken(rest, "comment");
+      break;
+    }
+
+    const current = normalized[index] ?? "";
+
+    if (current === "'" || current === '"' || current === "`") {
+      let cursor = index + 1;
+      while (cursor < normalized.length) {
+        const next = normalized[cursor] ?? "";
+        if (next === "\\") {
+          cursor += 2;
+          continue;
+        }
+
+        cursor += 1;
+        if (next === current) {
+          break;
+        }
+      }
+
+      output += renderToken(normalized.slice(index, cursor), "string");
+      index = cursor;
+      continue;
+    }
+
+    if (isDigit(current)) {
+      let cursor = index + 1;
+      while (cursor < normalized.length && /[0-9._]/.test(normalized[cursor] ?? "")) {
+        cursor += 1;
+      }
+
+      output += renderToken(normalized.slice(index, cursor), "number");
+      index = cursor;
+      continue;
+    }
+
+    if (isIdentifierStart(current)) {
+      let cursor = index + 1;
+      while (cursor < normalized.length && isIdentifierPart(normalized[cursor] ?? "")) {
+        cursor += 1;
+      }
+
+      const word = normalized.slice(index, cursor);
+      output += renderToken(word, classifyWordToken(word, normalized, index));
+      index = cursor;
+      continue;
+    }
+
+    if (/[{}()[\].,:;<>]/.test(current)) {
+      output += renderToken(current, "punctuation");
+      index += 1;
+      continue;
+    }
+
+    if (/[=+\-*/!?|&%^~]/.test(current)) {
+      output += renderToken(current, "operator");
+      index += 1;
+      continue;
+    }
+
+    output += escapeHtml(current);
+    index += 1;
+  }
+
+  return output || "&nbsp;";
+}
+
+async function buildCodeSnippet(sourceFilePath: string, cardTitle: string): Promise<CodeSnippet> {
+  const raw = await readFile(sourceFilePath, "utf8");
+  const allLines = raw.replace(/\r\n/g, "\n").split("\n");
+  const { start, end, focusIndexes } = findSnippetWindow(allLines, cardTitle);
+  const visibleLines = allLines.slice(start, end);
+  const longestLineLength = visibleLines.reduce((max, line) => Math.max(max, line.replace(/\t/g, "  ").length), 0);
+  const viewportWidth = Math.max(980, Math.min(1680, 360 + Math.ceil(longestLineLength * 10.4)));
+  const viewportHeight = Math.max(460, Math.min(1400, 250 + visibleLines.length * 34));
+
+  return {
+    fileName: path.basename(sourceFilePath),
+    languageLabel: getLanguageLabel(sourceFilePath),
+    title: cardTitle,
+    viewportWidth,
+    viewportHeight,
+    lines: visibleLines.map((line, offset) => {
+      const lineNumber = start + offset + 1;
+      return {
+        lineNumber,
+        text: line,
+        html: highlightCodeLine(line),
+        isFocus: focusIndexes.has(start + offset),
+      };
+    }),
+  };
+}
+
+function buildCodeScreenshotHtml(snippet: CodeSnippet): string {
+  const rows = snippet.lines
+    .map(
+      (line) => `
+        <tr class="code-row${line.isFocus ? " code-row-focus" : ""}">
+          <td class="code-line-number">${line.lineNumber}</td>
+          <td class="code-line-content"><code>${line.html}</code></td>
+        </tr>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(snippet.title)}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --canvas-a: #ffd7a8;
+        --canvas-b: #e18cff;
+        --canvas-c: #7f8cff;
+        --window-bg: rgba(36, 28, 58, 0.94);
+        --window-border: rgba(255, 255, 255, 0.16);
+        --window-shadow: 0 34px 80px rgba(36, 20, 74, 0.35);
+        --title: rgba(255, 255, 255, 0.88);
+        --muted: rgba(229, 221, 255, 0.52);
+        --line-number: rgba(210, 197, 255, 0.5);
+        --line-focus: rgba(255, 255, 255, 0.05);
+        --keyword: #ff6ea8;
+        --string: #ffd479;
+        --type: #74f0b8;
+        --function: #8dd6ff;
+        --number: #9db0ff;
+        --comment: #9b8fb7;
+        --tag: #7ae6d9;
+        --attribute: #ffb870;
+        --punctuation: #f3e9ff;
+        --operator: #ff9ec3;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 48px;
+        background:
+          radial-gradient(circle at top left, rgba(255, 244, 210, 0.95), transparent 34%),
+          radial-gradient(circle at bottom right, rgba(250, 187, 255, 0.75), transparent 38%),
+          linear-gradient(135deg, var(--canvas-a) 0%, var(--canvas-b) 52%, var(--canvas-c) 100%);
+        font-family: "Segoe UI", sans-serif;
+      }
+
+      .stage {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+      }
+
+      .window {
+        width: min(100%, ${Math.max(760, snippet.viewportWidth - 140)}px);
+        border-radius: 30px;
+        border: 1px solid var(--window-border);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 18%),
+          var(--window-bg);
+        box-shadow: var(--window-shadow);
+        backdrop-filter: blur(18px);
+        overflow: hidden;
+      }
+
+      .window-chrome {
+        position: relative;
+        display: grid;
+        grid-template-columns: 120px 1fr 120px;
+        align-items: center;
+        padding: 22px 26px 14px;
+      }
+
+      .traffic {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .traffic-dot {
+        width: 15px;
+        height: 15px;
+        border-radius: 999px;
+        background: rgba(237, 226, 255, 0.24);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      }
+
+      .window-name {
+        text-align: center;
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--muted);
+        letter-spacing: 0.01em;
+      }
+
+      .window-badge {
+        justify-self: end;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.64);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .window-title {
+        padding: 0 30px 14px;
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 18px;
+        font-weight: 600;
+        line-height: 1.45;
+      }
+
+      .code-shell {
+        padding: 0 22px 26px;
+      }
+
+      .code-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-family: "Cascadia Code", "JetBrains Mono", "Fira Code", "Consolas", monospace;
+        font-size: 18px;
+        line-height: 1.72;
+      }
+
+      .code-row-focus {
+        background: var(--line-focus);
+      }
+
+      .code-line-number,
+      .code-line-content {
+        vertical-align: top;
+        padding-top: 3px;
+        padding-bottom: 3px;
+      }
+
+      .code-line-number {
+        width: 68px;
+        padding-right: 20px;
+        color: var(--line-number);
+        text-align: right;
+        user-select: none;
+      }
+
+      .code-line-content {
+        color: rgba(245, 239, 255, 0.92);
+        white-space: pre;
+      }
+
+      code {
+        font: inherit;
+      }
+
+      .token-keyword { color: var(--keyword); font-weight: 700; }
+      .token-string { color: var(--string); }
+      .token-type { color: var(--type); }
+      .token-function { color: var(--function); }
+      .token-number { color: var(--number); }
+      .token-comment { color: var(--comment); }
+      .token-tag { color: var(--tag); }
+      .token-attribute { color: var(--attribute); }
+      .token-punctuation { color: var(--punctuation); }
+      .token-operator { color: var(--operator); }
+    </style>
+  </head>
+  <body>
+    <main class="stage">
+      <section class="window">
+        <div class="window-chrome">
+          <div class="traffic">
+            <span class="traffic-dot"></span>
+            <span class="traffic-dot"></span>
+            <span class="traffic-dot"></span>
+          </div>
+          <div class="window-name">${escapeHtml(snippet.fileName)}</div>
+          <div class="window-badge">${escapeHtml(snippet.languageLabel)}</div>
+        </div>
+        <div class="window-title">${escapeHtml(snippet.title)}</div>
+        <div class="code-shell">
+          <table class="code-table">
+            <tbody>${rows}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
+async function captureStyledCodeScreenshot(
+  sourceFilePath: string,
+  outputFilePath: string,
+  cardTitle: string,
+  browserPath: string,
+): Promise<boolean> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "yijiexhris-code-shot-"));
+
+  try {
+    const snippet = await buildCodeSnippet(sourceFilePath, cardTitle);
+    const htmlPath = path.join(tempDir, "index.html");
+    await Bun.write(htmlPath, buildCodeScreenshotHtml(snippet));
+
+    const result = await runAndCaptureOutput([
+      browserPath,
+      "--headless=new",
+      "--disable-gpu",
+      "--hide-scrollbars",
+      "--force-device-scale-factor=1.5",
+      `--window-size=${snippet.viewportWidth},${snippet.viewportHeight}`,
+      `--screenshot=${outputFilePath}`,
+      pathToFileURL(htmlPath).toString(),
+    ]);
+
+    return result.exitCode === 0 && (await fileExists(outputFilePath));
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function captureCodeScreenshotFallback(
   sourceFilePath: string,
   outputFilePath: string,
   cardTitle: string,
@@ -936,6 +1601,35 @@ $Bitmap.Dispose()
   );
 
   return result.exitCode === 0 && (await fileExists(outputFilePath));
+}
+
+async function captureCodeScreenshot(
+  sourceFilePath: string,
+  outputFilePath: string,
+  cardTitle: string,
+  browserPath: string | undefined,
+  config: AppConfig,
+): Promise<boolean> {
+  if (config.hrisCodeScreenshotStyle === "legacy") {
+    return captureCodeScreenshotFallback(sourceFilePath, outputFilePath, cardTitle);
+  }
+
+  if (browserPath) {
+    try {
+      const ok = await captureStyledCodeScreenshot(sourceFilePath, outputFilePath, cardTitle, browserPath);
+      if (ok) {
+        return true;
+      }
+    } catch {
+      // Fall back to the legacy bitmap renderer below.
+    }
+  }
+
+  if (config.hrisCodeScreenshotStrict) {
+    return false;
+  }
+
+  return captureCodeScreenshotFallback(sourceFilePath, outputFilePath, cardTitle);
 }
 
 async function captureUrlScreenshot(
@@ -1048,6 +1742,7 @@ export async function attachEvidenceToCards(
   }
 
   await mkdir(path.resolve(config.hrisEvidenceDir || "./reports/evidence"), { recursive: true });
+  const browserPath = await findBrowserPath(config);
 
   const output: HrisCardPayload[] = [];
 
@@ -1064,17 +1759,19 @@ export async function attachEvidenceToCards(
 
     let buktiPath: string | undefined;
     let previewProcess: Bun.Subprocess | undefined;
+    let evidenceError: string | undefined;
 
     try {
       if (mode === "url" && repo) {
         const url = resolvedUrl;
-        const browserPath = await findBrowserPath(config);
         if (url && browserPath) {
           previewProcess = await startPreviewServer(repo, config);
           const outputPath = buildEvidenceOutputPath(config, repo.name, card.title);
           const ok = await captureUrlScreenshot(url, outputPath, browserPath, repo, config);
           if (ok) {
             buktiPath = outputPath;
+          } else {
+            evidenceError = `url capture returned false for ${url}`;
           }
         }
       }
@@ -1084,18 +1781,27 @@ export async function attachEvidenceToCards(
         if (relativeFile) {
           const fullPath = path.resolve(repo.path, relativeFile);
           const outputPath = buildEvidenceOutputPath(config, repo.name, `${card.title}-code`);
-          const ok = await captureCodeScreenshot(fullPath, outputPath, card.title);
+          const ok = await captureCodeScreenshot(fullPath, outputPath, card.title, browserPath, config);
           if (ok) {
             buktiPath = outputPath;
+          } else {
+            evidenceError = `code capture returned false for ${fullPath}`;
           }
         }
       }
-    } catch {
+    } catch (error) {
+      evidenceError = error instanceof Error ? error.message : String(error);
       buktiPath = undefined;
     } finally {
       if (previewProcess?.pid) {
         await stopProcessTree(previewProcess.pid);
       }
+    }
+
+    if (!buktiPath) {
+      console.warn(
+        `[evidence] skipped "${card.title}" | repo=${repo?.name ?? "-"} | mode=${mode} | file=${relevantFile ?? "-"} | error=${evidenceError ?? "unknown"}`,
+      );
     }
 
     output.push({

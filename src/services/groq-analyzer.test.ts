@@ -45,6 +45,8 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     hrisEvidenceMode: "none",
     hrisEvidenceDir: "./reports/evidence",
     hrisBrowserPath: undefined,
+    hrisCodeScreenshotStyle: "ray",
+    hrisCodeScreenshotStrict: false,
     hrisDevServerWaitMs: 12000,
     hrisEmployeeId: undefined,
     outputDir: "./reports",

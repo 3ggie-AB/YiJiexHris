@@ -32,6 +32,8 @@ export interface AppConfig {
   hrisEvidenceMode: "none" | "auto" | "code" | "url";
   hrisEvidenceDir?: string;
   hrisBrowserPath?: string;
+  hrisCodeScreenshotStyle: "legacy" | "ray";
+  hrisCodeScreenshotStrict: boolean;
   hrisDevServerWaitMs: number;
   hrisEmployeeId?: string;
   outputDir?: string;

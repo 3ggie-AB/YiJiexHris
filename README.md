@@ -109,6 +109,9 @@ Untuk production Windows, kalau mau lebih stabil, jalankan command ini via Task 
 - Set `HRIS_SEND_DESCRIPTION=false` kalau kamu ingin card dikirim tanpa isi deskripsi.
 - Set `HRIS_SEND_EVIDENCE=false` kalau kamu tidak ingin upload screenshot bukti.
 - `HRIS_EVIDENCE_MODE=auto` akan memilih screenshot halaman untuk task view/UI jika `PROJECT_PREVIEW_URLS_JSON` tersedia, dan fallback ke screenshot kode untuk migration/bug/backend.
+- Set `HRIS_EVIDENCE_MODE=code` kalau semua bukti ingin dipaksa berupa screenshot kode.
+- `HRIS_CODE_SCREENSHOT_STYLE=ray` akan memakai renderer code screenshot bergaya editor/ray.so-like.
+- `HRIS_CODE_SCREENSHOT_STRICT=true` akan menolak fallback ke renderer legacy. Kalau render browser gagal, bukti kode tidak dibuat.
 - Checklist outgoing dipaksa `yes` semua dan akan mengirim `checklists[n][id]` kalau kamu isi `id` di `HRIS_CARD_CHECKLISTS_JSON`.
 - Kalau `PROJECT_ROUTE_RULES_JSON` kosong, tool akan analisa route dari file yang berubah, struktur view/pages, dan file `routes/*.php`. Isi env itu hanya kalau kamu mau override manual.
 - Kalau halaman preview butuh auth, isi `PROJECT_WEB_AUTH_JSON`. Tool akan buka login page, isi form, submit, lalu pindah ke route task sebelum ambil screenshot.
