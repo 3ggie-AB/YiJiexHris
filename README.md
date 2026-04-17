@@ -14,7 +14,7 @@ Zero-dependency. Semua request HTTP pakai `fetch` bawaan Bun.
 1. `collect`
    Scan repo dari `PROJECT_REPOS` dan/atau `PROJECTS_BASE_DIRS`.
 2. `analyze`
-   Kirim hasil scan ke Groq untuk dibentuk jadi report terstruktur.
+   Pecah hasil scan menjadi unit commit/working-tree yang punya signal, analisa multi-pass ke Groq, lalu gabungkan jadi report terstruktur.
 3. `send`
    Login ke HRIS, lalu buat card harian ke endpoint HRIS dengan `FormData`.
 4. `schedule`
@@ -25,6 +25,8 @@ Zero-dependency. Semua request HTTP pakai `fetch` bawaan Bun.
 Copy `.env.example` menjadi `.env`, lalu isi:
 
 - `GROQ_API_KEY`
+- `GROQ_ANALYSIS_MODEL` opsional, kalau model Groq untuk tahap analisa ingin dibedakan dari `GROQ_MODEL`
+- `GROQ_ANALYSIS_MAX_REQUESTS` opsional, untuk membatasi budget request Groq di tahap analisa multi-pass
 - `PROJECT_REPOS` atau `PROJECTS_BASE_DIRS`
 - `PROJECT_PREVIEW_URLS_JSON` jika ingin screenshot halaman project
 - `PROJECT_RUN_COMMANDS_JSON` jika project perlu dijalankan dulu sebelum di-screenshot
@@ -98,6 +100,9 @@ Untuk production Windows, kalau mau lebih stabil, jalankan command ini via Task 
 - Analyzer memakai Groq Responses API dan structured JSON output supaya payload ke HRIS konsisten.
 - Default model memakai `openai/gpt-oss-20b` karena mendukung strict structured outputs di Groq.
 - `send` akan membuat beberapa card sekaligus, maksimum sesuai `HRIS_CARD_LIMIT`. Default sekarang `50`.
+- Tahap `analyze` sekarang memecah commit dan working tree menjadi unit kecil supaya fitur besar tidak digabung sembarangan. Request ke Groq bisa lebih banyak, tetapi hasil task biasanya lebih deskriptif.
+- Perubahan trivial seperti `composer`/lockfile/env/log/file dokumen dan perubahan yang terlalu kecil akan difilter supaya tidak ikut dihitung sebagai card.
+- Atur `ANALYSIS_MIN_FILE_CHANGE_COUNT` dan `ANALYSIS_MIN_UNIT_CHANGE_COUNT` kalau mau memperketat atau melonggarkan filter signal kerja.
 - Kalau `HRIS_BOARD_ID` diisi, tool akan ambil list harian dari endpoint `boards/{board_id}/generate-lists` dan memilih `date` yang sama dengan `reportDate` hari ini. `HRIS_BOARD_LISTS_URL` bisa dipakai kalau endpoint board list kamu berbeda.
 - Kalau kamu sudah punya token HRIS, `HRIS_API_TOKEN` bisa dipakai untuk skip login.
 - Request `cards` dikirim sebagai `FormData`, jadi jangan override `Content-Type` menjadi JSON di `HRIS_API_HEADERS_JSON`.

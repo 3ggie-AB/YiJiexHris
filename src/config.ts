@@ -221,6 +221,12 @@ export function loadConfig(): AppConfig {
       "https://api.groq.com/openai/v1",
     groqModel:
       process.env.GROQ_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "openai/gpt-oss-20b",
+    groqAnalysisModel:
+      process.env.GROQ_ANALYSIS_MODEL?.trim() ||
+      process.env.GROQ_MODEL?.trim() ||
+      process.env.OPENAI_MODEL?.trim() ||
+      "openai/gpt-oss-20b",
+    groqAnalysisMaxRequests: Math.max(2, parseNumberEnv(process.env.GROQ_ANALYSIS_MAX_REQUESTS, 40)),
     projectRepos,
     projectBaseDirs,
     discoveryIgnoreNames:
@@ -266,6 +272,8 @@ export function loadConfig(): AppConfig {
     outputDir: process.env.OUTPUT_DIR?.trim() || "./reports",
     maxCommitsPerRepo: Math.max(1, parseNumberEnv(process.env.MAX_COMMITS_PER_REPO, 15)),
     maxFilesPerRepo: Math.max(1, parseNumberEnv(process.env.MAX_FILES_PER_REPO, 30)),
+    analysisMinFileChangeCount: Math.max(1, parseNumberEnv(process.env.ANALYSIS_MIN_FILE_CHANGE_COUNT, 2)),
+    analysisMinUnitChangeCount: Math.max(1, parseNumberEnv(process.env.ANALYSIS_MIN_UNIT_CHANGE_COUNT, 8)),
     scheduleTime: process.env.SCHEDULE_TIME?.trim() || undefined,
     scheduleRunOnStart: parseBooleanEnv(process.env.SCHEDULE_RUN_ON_START, true),
   };

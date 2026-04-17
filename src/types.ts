@@ -2,6 +2,8 @@ export interface AppConfig {
   groqApiKey?: string;
   groqBaseUrl: string;
   groqModel: string;
+  groqAnalysisModel: string;
+  groqAnalysisMaxRequests: number;
   projectRepos: string[];
   projectBaseDirs: string[];
   discoveryIgnoreNames: string[];
@@ -35,6 +37,8 @@ export interface AppConfig {
   outputDir?: string;
   maxCommitsPerRepo: number;
   maxFilesPerRepo: number;
+  analysisMinFileChangeCount: number;
+  analysisMinUnitChangeCount: number;
   scheduleTime?: string;
   scheduleRunOnStart: boolean;
 }
@@ -62,14 +66,22 @@ export interface RepoFileChangeStat {
   sources: Array<"committed" | "working_tree">;
 }
 
+export interface RepoCommitDetail extends GitCommit {
+  files: string[];
+  fileChangeStats: RepoFileChangeStat[];
+  diffStats?: string;
+}
+
 export interface RepoActivity {
   name: string;
   displayName?: string;
   path: string;
   branch?: string;
   commitsToday: GitCommit[];
+  commitDetails: RepoCommitDetail[];
   committedFilesToday: string[];
   workingTreeFiles: WorkingTreeFile[];
+  workingTreeFileChangeStats: RepoFileChangeStat[];
   fileChangeStats: RepoFileChangeStat[];
   diffStats?: string;
   lastCommit?: string;

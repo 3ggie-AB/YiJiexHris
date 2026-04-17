@@ -5,6 +5,7 @@ import type {
   CollectedActivity,
   GitCommit,
   RepoActivity,
+  RepoCommitDetail,
   RepoFileChangeStat,
   WorkingTreeFile,
 } from "../types";
@@ -33,18 +34,6 @@ function runGit(repoPath: string, args: string[]): GitCommandResult {
     stdout: decoder.decode(result.stdout).trim(),
     stderr: decoder.decode(result.stderr).trim(),
   };
-}
-
-function parseCommits(raw: string): GitCommit[] {
-  return raw
-    .split("\x1e")
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-    .map((chunk) => {
-      const [hash = "", shortHash = "", author = "", committedAt = "", subject = ""] = chunk.split("\x1f");
-      return { hash, shortHash, author, committedAt, subject };
-    })
-    .filter((commit) => Boolean(commit.hash));
 }
 
 function parseWorkingTree(raw: string): WorkingTreeFile[] {
@@ -168,6 +157,41 @@ function mergeFileChangeStats(...groups: RepoFileChangeStat[][]): RepoFileChange
   return Array.from(output.values()).sort((left, right) => right.changeCount - left.changeCount);
 }
 
+function formatShortDiffStats(items: RepoFileChangeStat[]): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  const additions = items.reduce((total, item) => total + item.additions, 0);
+  const deletions = items.reduce((total, item) => total + item.deletions, 0);
+  return `${items.length} file(s) changed, ${additions} insertion(s)(+), ${deletions} deletion(s)(-)`;
+}
+
+function parseCommitDetails(raw: string): RepoCommitDetail[] {
+  return raw
+    .split("\x1e")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const lines = chunk.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
+      const [header = "", ...statLines] = lines;
+      const [hash = "", shortHash = "", author = "", committedAt = "", subject = ""] = header.split("\x1f");
+      const fileChangeStats = parseFileChangeStats(statLines.join("\n"), "committed");
+
+      return {
+        hash,
+        shortHash,
+        author,
+        committedAt,
+        subject,
+        files: fileChangeStats.map((item) => item.path),
+        fileChangeStats,
+        diffStats: formatShortDiffStats(fileChangeStats),
+      } satisfies RepoCommitDetail;
+    })
+    .filter((commit) => Boolean(commit.hash));
+}
+
 function resolveRepoDisplayName(repoPath: string, aliases: Record<string, string>): string | undefined {
   const resolvedPath = path.resolve(repoPath);
   const repoName = path.basename(resolvedPath);
@@ -194,24 +218,15 @@ function collectRepository(repoPath: string, config: AppConfig): RepoActivity {
     errors.push(branch.stderr);
   }
 
-  const commits = runGit(repoPath, [
+  const commitDetailsLog = runGit(repoPath, [
     "log",
     "--since=midnight",
+    "--numstat",
     "--date=iso-strict",
-    "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e",
+    "--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%ad%x1f%s",
   ]);
-  if (!commits.ok && commits.stderr) {
-    errors.push(commits.stderr);
-  }
-
-  const committedFiles = runGit(repoPath, ["log", "--since=midnight", "--name-only", "--pretty=format:"]);
-  if (!committedFiles.ok && committedFiles.stderr) {
-    errors.push(committedFiles.stderr);
-  }
-
-  const committedFileStats = runGit(repoPath, ["log", "--since=midnight", "--numstat", "--pretty=format:"]);
-  if (!committedFileStats.ok && committedFileStats.stderr) {
-    errors.push(committedFileStats.stderr);
+  if (!commitDetailsLog.ok && commitDetailsLog.stderr) {
+    errors.push(commitDetailsLog.stderr);
   }
 
   const status = runGit(repoPath, ["status", "--porcelain=v1", "-uall"]);
@@ -234,17 +249,27 @@ function collectRepository(repoPath: string, config: AppConfig): RepoActivity {
     errors.push(lastCommit.stderr);
   }
 
+  const commitDetails = parseCommitDetails(commitDetailsLog.stdout);
+  const commitsToday: GitCommit[] = commitDetails.map(({ files: _files, fileChangeStats: _stats, diffStats, ...commit }) => ({
+    ...commit,
+  }));
+  const committedFilesToday = parseFileList(commitDetails.flatMap((commit) => commit.files).join("\n"));
+  const committedFileChangeStats = mergeFileChangeStats(...commitDetails.map((commit) => commit.fileChangeStats));
+  const workingTreeFileChangeStats = parseFileChangeStats(workingTreeFileStats.stdout, "working_tree");
+
   return {
     name,
     displayName,
     path: repoPath,
     branch: branch.stdout || undefined,
-    commitsToday: parseCommits(commits.stdout),
-    committedFilesToday: parseFileList(committedFiles.stdout),
+    commitsToday,
+    commitDetails,
+    committedFilesToday,
     workingTreeFiles: parseWorkingTree(status.stdout),
+    workingTreeFileChangeStats,
     fileChangeStats: mergeFileChangeStats(
-      parseFileChangeStats(committedFileStats.stdout, "committed"),
-      parseFileChangeStats(workingTreeFileStats.stdout, "working_tree"),
+      committedFileChangeStats,
+      workingTreeFileChangeStats,
     ),
     diffStats: diffStats.stdout || undefined,
     lastCommit: lastCommit.stdout || undefined,

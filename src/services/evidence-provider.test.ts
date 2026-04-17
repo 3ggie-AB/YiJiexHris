@@ -29,11 +29,13 @@ test("pickRelevantFile prefers file with biggest relevant code change", () => {
     path: "D:/projects/ERP",
     branch: "main",
     commitsToday: [],
+    commitDetails: [],
     committedFilesToday: [
       "database/migrations/2026_04_13_add_certificate_to_projects_table.php",
       "app/Services/ProjectCertificateService.php",
     ],
     workingTreeFiles: [],
+    workingTreeFileChangeStats: [],
     fileChangeStats: [
       {
         path: "database/migrations/2026_04_13_add_certificate_to_projects_table.php",
@@ -66,8 +68,10 @@ test("findRepositoryForTitle can resolve repository from aliased project title",
     path: "D:/makannnnnnnn/Smart-School-NEW",
     branch: "main",
     commitsToday: [],
+    commitDetails: [],
     committedFilesToday: [],
     workingTreeFiles: [],
+    workingTreeFileChangeStats: [],
     fileChangeStats: [],
     isDirty: false,
     errors: [],
@@ -99,8 +103,10 @@ test("resolveEvidenceUrl prefers explicit route rules over inferred route", asyn
     path: "D:/makannnnnnnn/Smart-School-NEW",
     branch: "main",
     commitsToday: [],
+    commitDetails: [],
     committedFilesToday: ["resources/views/murid/tabel-murid.blade.php"],
     workingTreeFiles: [],
+    workingTreeFileChangeStats: [],
     fileChangeStats: [
       {
         path: "resources/views/murid/tabel-murid.blade.php",
@@ -118,6 +124,8 @@ test("resolveEvidenceUrl prefers explicit route rules over inferred route", asyn
     groqApiKey: "x",
     groqBaseUrl: "https://api.groq.com/openai/v1",
     groqModel: "openai/gpt-oss-20b",
+    groqAnalysisModel: "openai/gpt-oss-20b",
+    groqAnalysisMaxRequests: 40,
     projectRepos: [],
     projectBaseDirs: [],
     discoveryIgnoreNames: [],
@@ -153,6 +161,8 @@ test("resolveEvidenceUrl prefers explicit route rules over inferred route", asyn
     outputDir: "./reports",
     maxCommitsPerRepo: 15,
     maxFilesPerRepo: 30,
+    analysisMinFileChangeCount: 2,
+    analysisMinUnitChangeCount: 8,
     scheduleTime: undefined,
     scheduleRunOnStart: true,
   };
@@ -182,8 +192,10 @@ test("resolveEvidenceUrl can analyze repo routes when env rules are empty", asyn
     path: repoRoot,
     branch: "main",
     commitsToday: [],
+    commitDetails: [],
     committedFilesToday: ["resources/views/murid/tabel-murid.blade.php"],
     workingTreeFiles: [],
+    workingTreeFileChangeStats: [],
     fileChangeStats: [
       {
         path: "resources/views/murid/tabel-murid.blade.php",
@@ -201,6 +213,8 @@ test("resolveEvidenceUrl can analyze repo routes when env rules are empty", asyn
     groqApiKey: "x",
     groqBaseUrl: "https://api.groq.com/openai/v1",
     groqModel: "openai/gpt-oss-20b",
+    groqAnalysisModel: "openai/gpt-oss-20b",
+    groqAnalysisMaxRequests: 40,
     projectRepos: [],
     projectBaseDirs: [],
     discoveryIgnoreNames: [],
@@ -234,6 +248,8 @@ test("resolveEvidenceUrl can analyze repo routes when env rules are empty", asyn
     outputDir: "./reports",
     maxCommitsPerRepo: 15,
     maxFilesPerRepo: 30,
+    analysisMinFileChangeCount: 2,
+    analysisMinUnitChangeCount: 8,
     scheduleTime: undefined,
     scheduleRunOnStart: true,
   };
