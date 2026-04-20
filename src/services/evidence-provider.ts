@@ -848,6 +848,7 @@ class CdpSession {
   private readonly socket: WebSocket;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>();
   private nextId = 1;
+  private isClosing = false;
 
   private constructor(socket: WebSocket) {
     this.socket = socket;
@@ -877,8 +878,10 @@ class CdpSession {
     });
 
     this.socket.addEventListener("close", () => {
-      for (const pending of this.pending.values()) {
-        pending.reject(new Error("CDP socket closed."));
+      if (!this.isClosing) {
+        for (const pending of this.pending.values()) {
+          pending.reject(new Error("CDP socket closed."));
+        }
       }
       this.pending.clear();
     });
@@ -908,6 +911,7 @@ class CdpSession {
   }
 
   close(): void {
+    this.isClosing = true;
     this.socket.close();
   }
 }
@@ -1052,6 +1056,33 @@ async function saveCdpScreenshot(session: CdpSession, outputFilePath: string): P
     format: "png",
     captureBeyondViewport: true,
     fromSurface: true,
+  });
+
+  if (!result?.data) {
+    return false;
+  }
+
+  await Bun.write(outputFilePath, Buffer.from(result.data, "base64"));
+  return fileExists(outputFilePath);
+}
+
+async function saveCdpScreenshotWithClip(
+  session: CdpSession,
+  outputFilePath: string,
+  width: number,
+  height: number,
+): Promise<boolean> {
+  const result = await session.send<{ data?: string }>("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: true,
+    clip: {
+      x: 0,
+      y: 0,
+      width,
+      height,
+      scale: 1,
+    },
   });
 
   if (!result?.data) {
@@ -1342,12 +1373,18 @@ function buildCodeScreenshotHtml(snippet: CodeSnippet): string {
 
       * { box-sizing: border-box; }
 
+      html, body {
+        width: 100%;
+        height: 100%;
+      }
+
       body {
         margin: 0;
         min-height: 100vh;
         display: grid;
         place-items: center;
         padding: 48px;
+        overflow: hidden;
         background:
           radial-gradient(circle at top left, rgba(255, 244, 210, 0.95), transparent 34%),
           radial-gradient(circle at bottom right, rgba(250, 187, 255, 0.75), transparent 38%),
@@ -1513,7 +1550,6 @@ async function captureStyledCodeScreenshot(
     const snippet = await buildCodeSnippet(sourceFilePath, cardTitle);
     const htmlPath = path.join(tempDir, "index.html");
     await Bun.write(htmlPath, buildCodeScreenshotHtml(snippet));
-
     const result = await runAndCaptureOutput([
       browserPath,
       "--headless=new",
