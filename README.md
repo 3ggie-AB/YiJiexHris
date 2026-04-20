@@ -46,10 +46,19 @@ bun run collect
 bun run analyze
 bun run send
 bun run run
+bun run activities --code 20260418-094338-ABC123
+bun run delete-activity --code 20260418-094338-ABC123 2 ACT-005
 bun run schedule
 ```
 
 `bun run run` adalah full pipeline: collect -> analyze -> send.
+
+Flow reuse package:
+
+- `bun run analyze` sekarang otomatis membuat folder package reusable.
+- `bun run activities --code <kode>` untuk lihat semua activity, `buktiPath`, repo, file relevan, dan status aktif/deleted.
+- `bun run delete-activity --code <kode> <nomor|ACT-xxx>` untuk menghapus activity dari package tanpa analisa ulang.
+- `bun run send --code <kode>` atau `bun run send --package <folder>` untuk kirim ulang package yang sudah disiapkan.
 
 ## Output
 
@@ -58,6 +67,12 @@ Secara default file JSON disimpan ke folder `reports/`:
 - `raw-YYYY-MM-DD.json`
 - `analysis-YYYY-MM-DD.json`
 - `payload-YYYY-MM-DD.json`
+- `packages/<kode-unik>/manifest.json`
+- `packages/<kode-unik>/collection.json`
+- `packages/<kode-unik>/analysis.json`
+- `packages/<kode-unik>/cards.json`
+
+Isi `cards.json` adalah payload card yang sudah siap pakai, termasuk `buktiPath` screenshot kalau evidence berhasil dibuat. `manifest.json` menyimpan `packageCode`, jumlah activity aktif, dan jumlah yang sudah dihapus dari terminal.
 
 ## Bentuk payload HRIS
 
@@ -100,7 +115,9 @@ Untuk production Windows, kalau mau lebih stabil, jalankan command ini via Task 
 - Analyzer memakai Groq Responses API dan structured JSON output supaya payload ke HRIS konsisten.
 - Default model memakai `openai/gpt-oss-20b` karena mendukung strict structured outputs di Groq.
 - `send` akan membuat beberapa card sekaligus, maksimum sesuai `HRIS_CARD_LIMIT`. Default sekarang `50`.
+- `send --code <kode>` dan `send --package <folder>` akan skip collect/analyze, lalu langsung kirim dari package reusable yang sudah ada.
 - Tahap `analyze` sekarang memecah commit dan working tree menjadi unit kecil supaya fitur besar tidak digabung sembarangan. Request ke Groq bisa lebih banyak, tetapi hasil task biasanya lebih deskriptif.
+- Tahap `analyze` sekarang juga menyiapkan package reusable di `reports/packages/` supaya payload + screenshot path bisa dipakai lagi tanpa analisa ulang.
 - Perubahan trivial seperti `composer`/lockfile/env/log/file dokumen dan perubahan yang terlalu kecil akan difilter supaya tidak ikut dihitung sebagai card.
 - Atur `ANALYSIS_MIN_FILE_CHANGE_COUNT` dan `ANALYSIS_MIN_UNIT_CHANGE_COUNT` kalau mau memperketat atau melonggarkan filter signal kerja.
 - Kalau `HRIS_BOARD_ID` diisi, tool akan ambil list harian dari endpoint `boards/{board_id}/generate-lists` dan memilih `date` yang sama dengan `reportDate` hari ini. `HRIS_BOARD_LISTS_URL` bisa dipakai kalau endpoint board list kamu berbeda.

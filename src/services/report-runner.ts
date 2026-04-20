@@ -1,14 +1,17 @@
 import type {
+  AnalysisPackage,
   AiAnalysisReport,
   AppConfig,
   CollectedActivity,
   HrisDeliveryResult,
   PipelineArtifacts,
+  PreparedHrisCard,
 } from "../types";
 import { writeJsonArtifact } from "../utils/artifacts";
+import { deletePackageActivities, listActivePackageCards, loadAnalysisPackage, writeAnalysisPackage } from "./analysis-package";
 import { collectActivity } from "./git-collector";
 import { analyzeActivity } from "./groq-analyzer";
-import { sendReportToHris } from "./hris-client";
+import { prepareHrisCardsForPackage, sendPreparedCards } from "./hris-client";
 
 export async function runCollection(config: AppConfig): Promise<{
   collection: CollectedActivity;
@@ -28,18 +31,24 @@ export async function runCollection(config: AppConfig): Promise<{
 export async function runAnalysis(config: AppConfig): Promise<{
   collection: CollectedActivity;
   report: AiAnalysisReport;
+  packageData: AnalysisPackage;
   artifacts: PipelineArtifacts;
 }> {
   const { collection, artifacts } = await runCollection(config);
   const report = await analyzeActivity(collection, config);
   const analysisFile = await writeJsonArtifact(config.outputDir, `analysis-${report.reportDate}.json`, report);
+  const preparedCards = await prepareHrisCardsForPackage(report, collection, config);
+  const packageData = await writeAnalysisPackage(config, collection, report, preparedCards);
 
   return {
     collection,
-    report,
+    report: packageData.report,
+    packageData,
     artifacts: {
       ...artifacts,
       analysisFile,
+      packageDir: packageData.packageDir,
+      packageCode: packageData.manifest.packageCode,
     },
   };
 }
@@ -47,22 +56,74 @@ export async function runAnalysis(config: AppConfig): Promise<{
 export async function runSend(config: AppConfig): Promise<{
   collection: CollectedActivity;
   report: AiAnalysisReport;
+  packageData: AnalysisPackage;
   delivery: HrisDeliveryResult;
   artifacts: PipelineArtifacts;
 }> {
-  const { collection, report, artifacts } = await runAnalysis(config);
-  const delivery = await sendReportToHris(report, collection, config);
+  const { collection, report, packageData, artifacts } = await runAnalysis(config);
+  const delivery = await sendPreparedCards(
+    listActivePackageCards(packageData.cards).map((card) => card.payload),
+    report.reportDate,
+    config,
+  );
   const payloadFile = await writeJsonArtifact(config.outputDir, `payload-${report.reportDate}.json`, delivery.payload);
 
   return {
     collection,
     report,
+    packageData,
     delivery,
     artifacts: {
       ...artifacts,
       payloadFile,
     },
   };
+}
+
+export async function runPackageSend(
+  config: AppConfig,
+  options: { packageCode?: string; packagePath?: string },
+): Promise<{
+  packageData: AnalysisPackage;
+  delivery: HrisDeliveryResult;
+  artifacts: PipelineArtifacts;
+}> {
+  const packageData = await loadAnalysisPackage(config, options);
+  const activeCards = listActivePackageCards(packageData.cards);
+  const delivery = await sendPreparedCards(
+    activeCards.map((card) => card.payload),
+    packageData.report.reportDate,
+    config,
+  );
+  const payloadFile = await writeJsonArtifact(
+    config.outputDir,
+    `payload-${packageData.report.reportDate}-${packageData.manifest.packageCode}.json`,
+    delivery.payload,
+  );
+
+  return {
+    packageData,
+    delivery,
+    artifacts: {
+      payloadFile,
+      packageDir: packageData.packageDir,
+      packageCode: packageData.manifest.packageCode,
+    },
+  };
+}
+
+export async function runPackageDeleteActivities(
+  config: AppConfig,
+  options: { packageCode?: string; packagePath?: string; selectors: string[]; reason?: string },
+): Promise<AnalysisPackage> {
+  return deletePackageActivities(config, options);
+}
+
+export async function runPackageLoad(
+  config: AppConfig,
+  options: { packageCode?: string; packagePath?: string },
+): Promise<AnalysisPackage> {
+  return loadAnalysisPackage(config, options);
 }
 
 export function printCollectionSummary(collection: CollectedActivity): void {
@@ -86,16 +147,39 @@ export function printCollectionSummary(collection: CollectedActivity): void {
   }
 }
 
-export function printAnalysisReport(report: AiAnalysisReport): void {
+export function printAnalysisReport(report: AiAnalysisReport, cards: PreparedHrisCard[] = []): void {
   console.log(`Productivity score: ${report.productivityScore}/100`);
   console.log(`Confidence        : ${report.confidence}`);
   console.log(`Summary           : ${report.overallSummary}`);
   console.log(`Focus             : ${report.focusAreas.join(", ") || "-"}`);
+
+  if (report.achievements.length > 0) {
+    console.log(`Achievements      : ${report.achievements.join(" | ")}`);
+  }
+
+  if (report.blockers.length > 0) {
+    console.log(`Blockers          : ${report.blockers.join(" | ")}`);
+  }
   console.log("");
 
   console.log("Activities:");
-  for (const activity of report.activities) {
-    console.log(`- ${activity}`);
+  if (cards.length === 0) {
+    for (const activity of report.activities) {
+      console.log(`- ${activity}`);
+    }
+  } else {
+    for (const card of cards) {
+      const state = card.deleted ? "deleted" : "active";
+      console.log(`- [${card.id}] ${card.title} (${state})`);
+      console.log(`  repo       : ${card.repository || "-"}`);
+      console.log(`  file       : ${card.relevantFile || "-"}`);
+      console.log(`  evidence   : ${card.evidenceMode}`);
+      console.log(`  preview    : ${card.evidenceUrl || "-"}`);
+      console.log(`  screenshot : ${card.evidencePath || "-"}`);
+      if (card.evidenceError) {
+        console.log(`  error      : ${card.evidenceError}`);
+      }
+    }
   }
 
   console.log("");
@@ -121,6 +205,14 @@ export function printAnalysisReport(report: AiAnalysisReport): void {
       console.log(`- ${priority}`);
     }
   }
+}
+
+export function printPackageSummary(packageData: AnalysisPackage): void {
+  console.log(`Package code      : ${packageData.manifest.packageCode}`);
+  console.log(`Package dir       : ${packageData.packageDir}`);
+  console.log(`Created at        : ${packageData.manifest.createdAt}`);
+  console.log(`Report date       : ${packageData.manifest.reportDate}`);
+  console.log(`Activities active : ${packageData.manifest.activeActivityCount}/${packageData.manifest.activityCount}`);
 }
 
 export function printDeliveryResult(delivery: HrisDeliveryResult): void {

@@ -5,8 +5,9 @@ import type {
   HrisCardPayload,
   HrisCreatedCardResult,
   HrisDeliveryResult,
+  PreparedHrisCard,
 } from "../types";
-import { attachEvidenceToCards } from "./evidence-provider";
+import { prepareEvidenceCards } from "./evidence-provider";
 
 interface HrisBoardList {
   id?: unknown;
@@ -141,23 +142,18 @@ function buildCardDescription(
   return sections.join("\n");
 }
 
-export function buildHrisCardPayloads(
+function buildHrisCardPayloadsWithListId(
   report: AiAnalysisReport,
   collection: CollectedActivity,
   config: AppConfig,
-  listIdOverride?: number,
+  listId: number,
 ): HrisCardPayload[] {
-  const resolvedListId = listIdOverride ?? config.hrisListId;
-  if (!resolvedListId) {
-    throw new Error("HRIS_LIST_ID is not configured.");
-  }
-
   const primaryProject = getPrimaryProject(report);
   const baseActivities = report.activities.length > 0 ? report.activities : [report.overallSummary];
   const limitedActivities = baseActivities.slice(0, config.hrisCardLimit);
 
   return limitedActivities.map((activity, index) => ({
-    list_id: resolvedListId,
+    list_id: listId,
     title: buildCardTitle(primaryProject, activity, `Aktivitas ${index + 1}`),
     description: buildCardDescription(report, collection, config, activity || `Aktivitas ${index + 1}`),
     checklists: config.hrisCardChecklists.map((checklist) => ({
@@ -166,6 +162,20 @@ export function buildHrisCardPayloads(
     })),
     ...config.hrisPayloadStatic,
   }));
+}
+
+export function buildHrisCardPayloads(
+  report: AiAnalysisReport,
+  collection: CollectedActivity,
+  config: AppConfig,
+  listIdOverride?: number,
+): HrisCardPayload[] {
+  const resolvedListId = listIdOverride ?? config.hrisListId;
+  if (resolvedListId === undefined) {
+    throw new Error("HRIS_LIST_ID is not configured.");
+  }
+
+  return buildHrisCardPayloadsWithListId(report, collection, config, resolvedListId);
 }
 
 async function loginToHris(config: AppConfig): Promise<{ token: string; tokenSource: "login" | "env_token" }> {
@@ -351,9 +361,39 @@ async function createCard(
   };
 }
 
-export async function sendReportToHris(
+export async function prepareHrisCardsForPackage(
   report: AiAnalysisReport,
   collection: CollectedActivity,
+  config: AppConfig,
+): Promise<PreparedHrisCard[]> {
+  const baseActivities = report.activities.length > 0 ? report.activities : [report.overallSummary];
+  const limitedActivities = baseActivities.slice(0, config.hrisCardLimit);
+  const draftListId = config.hrisListId ?? 0;
+  const preparedEvidence = await prepareEvidenceCards(
+    buildHrisCardPayloadsWithListId(report, collection, config, draftListId),
+    collection,
+    config,
+  );
+
+  return preparedEvidence.map((item, index) => ({
+    id: `ACT-${String(index + 1).padStart(3, "0")}`,
+    index: index + 1,
+    activity: limitedActivities[index] ?? item.card.title,
+    title: item.card.title,
+    payload: item.card,
+    deleted: false,
+    repository: item.repository,
+    relevantFile: item.relevantFile,
+    evidenceMode: item.evidenceMode,
+    evidenceUrl: item.evidenceUrl,
+    evidencePath: item.card.buktiPath,
+    evidenceError: item.evidenceError,
+  }));
+}
+
+export async function sendPreparedCards(
+  cards: HrisCardPayload[],
+  reportDate: string,
   config: AppConfig,
 ): Promise<HrisDeliveryResult> {
   if (!config.hrisCardsUrl) {
@@ -361,15 +401,14 @@ export async function sendReportToHris(
   }
 
   const { token, tokenSource } = await loginToHris(config);
-  const listId = await resolveHrisListId(report.reportDate, token, config);
-  const cards = await attachEvidenceToCards(
-    buildHrisCardPayloads(report, collection, config, listId),
-    collection,
-    config,
-  );
+  const listId = await resolveHrisListId(reportDate, token, config);
+  const cardsWithListId = cards.map((card) => ({
+    ...card,
+    list_id: listId,
+  }));
   const createdCards: HrisCreatedCardResult[] = [];
 
-  for (const payload of cards) {
+  for (const payload of cardsWithListId) {
     const result = await createCard(payload, token, config);
     createdCards.push(result);
   }
@@ -388,8 +427,25 @@ export async function sendReportToHris(
     responseBody: createdCards.map((item) => item.responseBody),
     payload: {
       tokenSource,
-      cards,
+      cards: cardsWithListId,
     },
     createdCards,
   };
+}
+
+export async function sendReportToHris(
+  report: AiAnalysisReport,
+  collection: CollectedActivity,
+  config: AppConfig,
+): Promise<HrisDeliveryResult> {
+  if (!config.hrisCardsUrl) {
+    throw new Error("HRIS_CARDS_URL is not configured.");
+  }
+
+  const preparedCards = await prepareHrisCardsForPackage(report, collection, config);
+  return sendPreparedCards(
+    preparedCards.filter((card) => !card.deleted).map((card) => card.payload),
+    report.reportDate,
+    config,
+  );
 }

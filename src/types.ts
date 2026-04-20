@@ -154,6 +154,8 @@ export interface PipelineArtifacts {
   rawFile?: string;
   analysisFile?: string;
   payloadFile?: string;
+  packageDir?: string;
+  packageCode?: string;
 }
 
 export interface HrisChecklistTemplate {
@@ -194,4 +196,48 @@ export interface HrisDeliveryResult {
     cards: HrisCardPayload[];
   };
   createdCards: HrisCreatedCardResult[];
+}
+
+export interface PreparedHrisCard {
+  id: string;
+  index: number;
+  activity: string;
+  title: string;
+  payload: HrisCardPayload;
+  deleted: boolean;
+  deletedAt?: string;
+  deletedReason?: string;
+  repository?: string;
+  relevantFile?: string;
+  evidenceMode: "none" | "code" | "url";
+  evidenceUrl?: string;
+  evidencePath?: string;
+  evidenceError?: string;
+}
+
+export interface PreparedEvidenceCard {
+  card: HrisCardPayload;
+  repository?: string;
+  relevantFile?: string;
+  evidenceMode: "none" | "code" | "url";
+  evidenceUrl?: string;
+  evidenceError?: string;
+}
+
+export interface AnalysisPackageManifest {
+  version: number;
+  packageCode: string;
+  createdAt: string;
+  reportDate: string;
+  activityCount: number;
+  activeActivityCount: number;
+  deletedActivityCount: number;
+}
+
+export interface AnalysisPackage {
+  packageDir: string;
+  manifest: AnalysisPackageManifest;
+  collection: CollectedActivity;
+  report: AiAnalysisReport;
+  cards: PreparedHrisCard[];
 }

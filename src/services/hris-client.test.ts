@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildCardFormData, buildHrisCardPayloads, sendReportToHris } from "./hris-client";
+import { buildCardFormData, buildHrisCardPayloads, prepareHrisCardsForPackage, sendPreparedCards, sendReportToHris } from "./hris-client";
 
 test("buildCardFormData flattens checklists into indexed form fields", () => {
   const formData = buildCardFormData({
@@ -221,6 +221,217 @@ test("buildHrisCardPayloads can send empty description when disabled by config",
   );
 
   expect(payloads[0]?.description).toBe("");
+});
+
+test("prepareHrisCardsForPackage can build reusable cards without HRIS list id", async () => {
+  const cards = await prepareHrisCardsForPackage(
+    {
+      generatedAt: "2026-04-18T00:00:00.000Z",
+      reportDate: "2026-04-18",
+      productivityScore: 80,
+      overallSummary: "Fokus mengerjakan ERP hari ini.",
+      focusAreas: ["ERP"],
+      achievements: ["Menyiapkan migrasi"],
+      blockers: [],
+      improvements: [],
+      nextPriorities: [],
+      activities: ["ERP : Membuat File Migration untuk Menambahkan Kolom di Tabel Task"],
+      confidence: "high",
+      projectInsights: [
+        {
+          project: "ERP",
+          status: "active",
+          summary: "Fokus di migrasi database",
+          commitCount: 2,
+          changedFilesCount: 4,
+        },
+      ],
+    },
+    {
+      generatedAt: "2026-04-18T00:00:00.000Z",
+      reportDate: "2026-04-18",
+      timezone: "Asia/Jakarta",
+      repositories: [],
+      metrics: {
+        projectCount: 1,
+        activeProjectCount: 1,
+        reposWithCommitsToday: 1,
+        dirtyRepoCount: 0,
+        totalCommits: 2,
+        totalCommittedFiles: 3,
+        totalWorkingTreeFiles: 1,
+        uniqueFilesTouched: 4,
+      },
+    },
+    {
+      groqApiKey: "x",
+      groqBaseUrl: "https://api.groq.com/openai/v1",
+      groqModel: "openai/gpt-oss-20b",
+      groqAnalysisModel: "openai/gpt-oss-20b",
+      groqAnalysisMaxRequests: 40,
+      projectRepos: [],
+      projectBaseDirs: [],
+      discoveryIgnoreNames: [],
+      projectPreviewUrls: {},
+      projectRunCommands: {},
+      projectRouteRules: {},
+      projectWebAuth: {},
+      projectAliases: {},
+      hrisLoginUrl: undefined,
+      hrisCardsUrl: undefined,
+      hrisApiMethod: "POST",
+      hrisEmail: undefined,
+      hrisPassword: undefined,
+      hrisListId: undefined,
+      hrisBoardId: undefined,
+      hrisBoardListsUrl: undefined,
+      hrisCardLimit: 5,
+      hrisApiToken: undefined,
+      hrisAuthHeader: "Authorization",
+      hrisTokenPrefix: "Bearer",
+      hrisHeaders: {},
+      hrisPayloadStatic: {},
+      hrisCardChecklists: [],
+      hrisSendDescription: false,
+      hrisSendEvidence: false,
+      hrisEvidenceMode: "none",
+      hrisEvidenceDir: "./reports/evidence",
+      hrisBrowserPath: undefined,
+      hrisCodeScreenshotStyle: "ray",
+      hrisCodeScreenshotStrict: false,
+      hrisDevServerWaitMs: 12000,
+      hrisEmployeeId: undefined,
+      outputDir: "./reports",
+      maxCommitsPerRepo: 15,
+      maxFilesPerRepo: 30,
+      analysisMinFileChangeCount: 2,
+      analysisMinUnitChangeCount: 8,
+      scheduleTime: undefined,
+      scheduleRunOnStart: true,
+    },
+  );
+
+  expect(cards).toHaveLength(1);
+  expect(cards[0]?.id).toBe("ACT-001");
+  expect(cards[0]?.payload.list_id).toBe(0);
+  expect(cards[0]?.evidenceMode).toBe("none");
+});
+
+test("sendPreparedCards resolves list_id from board date before creating cards", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestUrls: string[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    requestUrls.push(url);
+
+    if (url.endsWith("/api/login")) {
+      return new Response(JSON.stringify({ token: "token-123" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.endsWith("/api/boards/136/generate-lists")) {
+      expect(init?.method).toBe("POST");
+      return new Response(
+        JSON.stringify([
+          { id: 35115, board_id: 136, date: "2026-04-17" },
+          { id: 35116, board_id: 136, date: "2026-04-18" },
+        ]),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (url.endsWith("/api/cards")) {
+      const formData = init?.body as FormData;
+      expect(formData.get("list_id")).toBe("35116");
+      expect(formData.get("title")).toBe("ERP : Menambahkan Migrasi Sertifikat");
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const result = await sendPreparedCards(
+      [
+        {
+          list_id: 0,
+          title: "ERP : Menambahkan Migrasi Sertifikat",
+          description: "",
+          checklists: [],
+          buktiPath: "D:/reports/evidence/erp-sertifikat.png",
+          buktiFilename: "erp-sertifikat.png",
+          buktiContentType: "image/png",
+        },
+      ],
+      "2026-04-18",
+      {
+        groqApiKey: "x",
+        groqBaseUrl: "https://api.groq.com/openai/v1",
+        groqModel: "openai/gpt-oss-20b",
+        groqAnalysisModel: "openai/gpt-oss-20b",
+        groqAnalysisMaxRequests: 40,
+        projectRepos: [],
+        projectBaseDirs: [],
+        discoveryIgnoreNames: [],
+        projectPreviewUrls: {},
+        projectRunCommands: {},
+        projectRouteRules: {},
+        projectWebAuth: {},
+        projectAliases: {},
+        hrisLoginUrl: "https://hr.itsyntax.dev/api/login",
+        hrisCardsUrl: "https://hr.itsyntax.dev/api/cards",
+        hrisApiMethod: "POST",
+        hrisEmail: "user@example.com",
+        hrisPassword: "secret",
+        hrisListId: undefined,
+        hrisBoardId: 136,
+        hrisBoardListsUrl: undefined,
+        hrisCardLimit: 5,
+        hrisApiToken: undefined,
+        hrisAuthHeader: "Authorization",
+        hrisTokenPrefix: "Bearer",
+        hrisHeaders: {},
+        hrisPayloadStatic: {},
+        hrisCardChecklists: [],
+        hrisSendDescription: false,
+        hrisSendEvidence: false,
+        hrisEvidenceMode: "none",
+        hrisEvidenceDir: "./reports/evidence",
+        hrisBrowserPath: undefined,
+        hrisCodeScreenshotStyle: "ray",
+        hrisCodeScreenshotStrict: false,
+        hrisDevServerWaitMs: 12000,
+        hrisEmployeeId: undefined,
+        outputDir: "./reports",
+        maxCommitsPerRepo: 15,
+        maxFilesPerRepo: 30,
+        analysisMinFileChangeCount: 2,
+        analysisMinUnitChangeCount: 8,
+        scheduleTime: undefined,
+        scheduleRunOnStart: true,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.payload.cards[0]?.list_id).toBe(35116);
+    expect(requestUrls).toEqual([
+      "https://hr.itsyntax.dev/api/login",
+      "https://hr.itsyntax.dev/api/boards/136/generate-lists",
+      "https://hr.itsyntax.dev/api/cards",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("sendReportToHris resolves list_id from board date before creating cards", async () => {

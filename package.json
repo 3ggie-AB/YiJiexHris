@@ -5,6 +5,8 @@
   "scripts": {
     "collect": "bun src/index.ts collect",
     "analyze": "bun src/index.ts analyze",
+    "activities": "bun src/index.ts activities",
+    "delete-activity": "bun src/index.ts delete-activity",
     "send": "bun src/index.ts send",
     "run": "bun src/index.ts run",
     "schedule": "bun src/index.ts schedule",

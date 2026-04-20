@@ -7,6 +7,7 @@ import type {
   AppConfig,
   CollectedActivity,
   HrisCardPayload,
+  PreparedEvidenceCard,
   ProjectRouteRule,
   ProjectWebAuthConfig,
   RepoActivity,
@@ -1732,19 +1733,22 @@ function buildEvidenceOutputPath(config: AppConfig, repoName: string, cardTitle:
   return path.resolve(config.hrisEvidenceDir || "./reports/evidence", `${safeRepoName}-${safeTitle}.png`);
 }
 
-export async function attachEvidenceToCards(
+export async function prepareEvidenceCards(
   cards: HrisCardPayload[],
   collection: CollectedActivity,
   config: AppConfig,
-): Promise<HrisCardPayload[]> {
+): Promise<PreparedEvidenceCard[]> {
   if (!config.hrisSendEvidence || config.hrisEvidenceMode === "none") {
-    return cards;
+    return cards.map((card) => ({
+      card,
+      evidenceMode: "none",
+    }));
   }
 
   await mkdir(path.resolve(config.hrisEvidenceDir || "./reports/evidence"), { recursive: true });
   const browserPath = await findBrowserPath(config);
 
-  const output: HrisCardPayload[] = [];
+  const output: PreparedEvidenceCard[] = [];
 
   for (const card of cards) {
     const repo = findRepositoryForTitle(card.title, collection);
@@ -1805,12 +1809,28 @@ export async function attachEvidenceToCards(
     }
 
     output.push({
-      ...card,
-      buktiPath,
-      buktiFilename: buktiPath ? path.basename(buktiPath) : undefined,
-      buktiContentType: buktiPath ? "image/png" : undefined,
+      card: {
+        ...card,
+        buktiPath,
+        buktiFilename: buktiPath ? path.basename(buktiPath) : undefined,
+        buktiContentType: buktiPath ? "image/png" : undefined,
+      },
+      repository: repo?.displayName || repo?.name,
+      relevantFile,
+      evidenceMode: mode,
+      evidenceUrl: resolvedUrl,
+      evidenceError,
     });
   }
 
   return output;
+}
+
+export async function attachEvidenceToCards(
+  cards: HrisCardPayload[],
+  collection: CollectedActivity,
+  config: AppConfig,
+): Promise<HrisCardPayload[]> {
+  const prepared = await prepareEvidenceCards(cards, collection, config);
+  return prepared.map((item) => item.card);
 }
