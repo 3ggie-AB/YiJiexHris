@@ -10,6 +10,22 @@
     "send": "bun src/index.ts send",
     "run": "bun src/index.ts run",
     "schedule": "bun src/index.ts schedule",
+    "web": "bun src/web/server.ts",
     "test": "bun test"
+  },
+  "dependencies": {
+    "@octokit/rest": "^22.0.0",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "mongodb": "^6.17.0",
+    "passport": "^0.7.0",
+    "passport-github2": "^0.1.12",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/express-session": "^1.18.2",
+    "@types/passport": "^1.0.17"
   }
 }

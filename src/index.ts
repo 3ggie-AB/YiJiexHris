@@ -1,4 +1,5 @@
 import { assertAnalyzeConfig, assertScheduleConfig, assertSendConfig, loadConfig } from "./config";
+import { loadProjectEnv } from "./utils/load-project-env";
 import {
   printAnalysisReport,
   printCollectionSummary,
@@ -12,6 +13,8 @@ import {
   runSend,
 } from "./services/report-runner";
 import { getNextRunAt } from "./utils/date";
+
+loadProjectEnv();
 
 type Command = "collect" | "analyze" | "send" | "run" | "schedule" | "activities" | "delete-activity" | "help";
 

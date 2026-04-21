@@ -91,6 +91,7 @@ out
 .nuxt
 dist
 reports
+.web-build
 
 # Gatsby files
 .cache/

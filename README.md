@@ -9,6 +9,38 @@ CLI Bun untuk:
 
 Zero-dependency. Semua request HTTP pakai `fetch` bawaan Bun.
 
+## Web Dashboard
+
+Sekarang ada mode web berbasis React + Tailwind dengan:
+
+- Auth GitHub via Passport
+- GitHub API via Octokit
+- React dashboard untuk connect repository, filter selection, lalu analyze langsung dari state aktif
+- Konfigurasi global dibaca dari environment
+- Data per-user tetap disimpan di MongoDB
+- Halaman detail run, commit, dan isi file perubahan dari GitHub
+
+Command:
+
+```bash
+bun run web
+```
+
+Environment untuk mode web:
+
+- `MONGODB_URI`
+- `APP_BASE_URL`
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `MONGODB_DB` opsional
+- `SESSION_SECRET` opsional untuk session cookie
+- `PORT` opsional
+- `GITHUB_TIMEZONE` opsional
+- `GITHUB_TIMEZONE_OFFSET` opsional
+- `GITHUB_DEFAULT_REPOSITORIES` opsional untuk seed pilihan repo di dashboard
+
+Tidak ada lagi halaman `/setup`. OAuth GitHub dan config global lain mengikuti `.env`, sedangkan user session, connected repositories, dan histori run tetap tersimpan di MongoDB.
+
 ## Alur
 
 1. `collect`
