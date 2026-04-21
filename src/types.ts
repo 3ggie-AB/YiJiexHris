@@ -66,6 +66,7 @@ export interface RepoFileChangeStat {
   deletions: number;
   changeCount: number;
   sources: Array<"committed" | "working_tree">;
+  gitStatuses?: string[];
 }
 
 export interface RepoCommitDetail extends GitCommit {

@@ -2,6 +2,10 @@ import type { RepoActivity, RepoFileChangeStat } from "../types";
 
 type ProjectLabelTarget = Pick<RepoActivity, "name" | "displayName">;
 
+interface BuildFileActivityOptions {
+  gitStatuses?: string[];
+}
+
 const GENERIC_VIEW_NAMES = new Set(["index", "create", "edit", "show", "list", "form", "preview", "detail"]);
 const LOW_SIGNAL_FILE_NAMES = new Set([
   ".env",
@@ -66,8 +70,12 @@ export function toTitleWords(raw: string): string {
         return word;
       }
 
-      if (/^(api|uuid|pdf|ui|ux|id|otp|sql|db)$/i.test(word)) {
+      if (/^(api|uuid|pdf|ui|ux|id|otp|sql|db|hris|lsp|ppdb|erp)$/i.test(word)) {
         return word.toUpperCase();
+      }
+
+      if (/^xendit$/i.test(word)) {
+        return "Xendit";
       }
 
       return `${word[0]?.toUpperCase() ?? ""}${word.slice(1).toLowerCase()}`;
@@ -176,7 +184,55 @@ function buildViewLabel(parts: string[]): string {
   return toTitleWords(parent && stem.startsWith("_") ? `${parent} ${cleanStem}` : cleanStem);
 }
 
-export function buildFileActivity(repo: ProjectLabelTarget, filePath: string): string | undefined {
+function toActivityObjectCase(raw: string): string {
+  return raw.replace(/[A-Za-z0-9]+/g, (word) => {
+    if (/^\d+$/.test(word) || /^[A-Z0-9]{2,}$/.test(word)) {
+      return word;
+    }
+
+    if (/^(api|uuid|pdf|ui|ux|id|otp|sql|db|hris|lsp|ppdb|erp)$/i.test(word)) {
+      return word.toUpperCase();
+    }
+
+    if (/^xendit$/i.test(word)) {
+      return "Xendit";
+    }
+
+    return word.toLowerCase();
+  });
+}
+
+function cleanupRoleLabel(rawLabel: string, role: string): string {
+  const original = rawLabel.replace(/\s+/g, " ").trim();
+  if (!original) {
+    return original;
+  }
+
+  let label = original;
+
+  if (["handler", "controller", "service", "repository", "route"].includes(role)) {
+    label = label.replace(/^(Get|Post|Put|Patch|Delete|Create|Update|Set|Index|List|Show|Detail|Data)\s+/i, "");
+    if (/\bPer\b/i.test(label)) {
+      label = label.replace(/^Group\s+/i, "");
+    }
+    label = label.replace(/^Customer\s+(Income\b)/i, "$1");
+  }
+
+  return label.trim() || original;
+}
+
+function usesCreateVerb(gitStatuses: string[] | undefined): boolean {
+  return (gitStatuses ?? []).some((status) => {
+    const normalized = status.trim().toUpperCase()[0];
+    return normalized === "A" || normalized === "C";
+  });
+}
+
+export function buildFileActivity(
+  repo: ProjectLabelTarget,
+  filePath: string,
+  options: BuildFileActivityOptions = {},
+): string | undefined {
   const normalized = normalizeFilePath(filePath);
   if (!normalized || isLowSignalPath(normalized)) {
     return undefined;
@@ -186,6 +242,7 @@ export function buildFileActivity(repo: ProjectLabelTarget, filePath: string): s
   const parts = normalized.split("/");
   const fileName = parts.at(-1) ?? normalized;
   const stem = fileName.replace(/(\.blade)?\.[^.]+$/gi, "");
+  const fileVerb = usesCreateVerb(options.gitStatuses) ? "Menambahkan" : "Memperbarui";
 
   if (/(^|\/)database\/migrations?\//i.test(lower) || /(^|\/)migrations?\//i.test(lower)) {
     const migrationName = stem.replace(/^\d{4}_\d{2}_\d{2}_\d{6}_/, "");
@@ -194,57 +251,57 @@ export function buildFileActivity(repo: ProjectLabelTarget, filePath: string): s
   }
 
   if (/\.blade\.php$/i.test(lower) || /(^|\/)views?\//i.test(lower)) {
-    const label = buildViewLabel(parts);
-    return label ? `${getProjectLabel(repo)} : Memperbarui View ${label}` : undefined;
+    const label = toActivityObjectCase(buildViewLabel(parts));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} tampilan ${label}` : undefined;
   }
 
   if (/(^|\/)controllers?\//i.test(lower) || /controller/i.test(fileName)) {
-    const label = stripTrailingKeyword(toTitleWords(stem), "Controller");
-    return label ? `${getProjectLabel(repo)} : Memperbarui Controller ${label}` : undefined;
+    const label = toActivityObjectCase(cleanupRoleLabel(stripTrailingKeyword(toTitleWords(stem), "Controller"), "controller"));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} controller ${label}` : undefined;
   }
 
   if (/(^|\/)handlers?\//i.test(lower) || /handler/i.test(fileName)) {
-    const label = stripTrailingKeyword(toTitleWords(stem), "Handler");
-    return label ? `${getProjectLabel(repo)} : Memperbarui Handler ${label}` : undefined;
+    const label = toActivityObjectCase(cleanupRoleLabel(stripTrailingKeyword(toTitleWords(stem), "Handler"), "handler"));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} handler ${label}` : undefined;
   }
 
   if (/(^|\/)services?\//i.test(lower) || /service/i.test(fileName)) {
-    const label = stripTrailingKeyword(toTitleWords(stem), "Service");
-    return label ? `${getProjectLabel(repo)} : Memperbarui Service ${label}` : undefined;
+    const label = toActivityObjectCase(cleanupRoleLabel(stripTrailingKeyword(toTitleWords(stem), "Service"), "service"));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} service ${label}` : undefined;
   }
 
   if (/(^|\/)models?\//i.test(lower) || /model/i.test(fileName)) {
-    const label = stripTrailingKeyword(toTitleWords(stem), "Model");
-    return label ? `${getProjectLabel(repo)} : Memperbarui Model ${label}` : undefined;
+    const label = toActivityObjectCase(stripTrailingKeyword(toTitleWords(stem), "Model"));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} model ${label}` : undefined;
   }
 
   if (/(^|\/)helpers?\//i.test(lower) || /helper/i.test(fileName)) {
-    const label = stripTrailingKeyword(toTitleWords(stem), "Helper");
-    return label ? `${getProjectLabel(repo)} : Menyesuaikan Helper ${label}` : undefined;
+    const label = toActivityObjectCase(stripTrailingKeyword(toTitleWords(stem), "Helper"));
+    return label ? `${getProjectLabel(repo)} : Menyesuaikan helper ${label}` : undefined;
   }
 
   if (/(^|\/)routes?\//i.test(lower)) {
-    const label = toTitleWords(stem);
-    return label ? `${getProjectLabel(repo)} : Menyesuaikan Route ${label}` : undefined;
+    const label = toActivityObjectCase(cleanupRoleLabel(toTitleWords(stem), "route"));
+    return label ? `${getProjectLabel(repo)} : Menyesuaikan route ${label}` : undefined;
   }
 
   if (/(^|\/)config\//i.test(lower)) {
-    const label = toTitleWords(stem);
-    return label ? `${getProjectLabel(repo)} : Menyesuaikan Konfigurasi ${label}` : undefined;
+    const label = toActivityObjectCase(toTitleWords(stem));
+    return label ? `${getProjectLabel(repo)} : Menyesuaikan konfigurasi ${label}` : undefined;
   }
 
   if (/(^|\/)repositories?\//i.test(lower) || /repo/i.test(fileName)) {
-    const label = stripTrailingKeyword(toTitleWords(stem), "Repo");
-    return label ? `${getProjectLabel(repo)} : Memperbarui Repository ${label}` : undefined;
+    const label = toActivityObjectCase(cleanupRoleLabel(stripTrailingKeyword(toTitleWords(stem), "Repo"), "repository"));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} repository ${label}` : undefined;
   }
 
   if (/\.(js|ts|tsx)$/i.test(lower) && /(^|\/)public\//i.test(lower)) {
-    const label = toTitleWords(stem);
-    return label ? `${getProjectLabel(repo)} : Memperbarui Script Browser ${label}` : undefined;
+    const label = toActivityObjectCase(toTitleWords(stem));
+    return label ? `${getProjectLabel(repo)} : ${fileVerb} script browser ${label}` : undefined;
   }
 
-  const fallback = toTitleWords(stem);
-  return fallback ? `${getProjectLabel(repo)} : Memperbarui ${fallback}` : undefined;
+  const fallback = toActivityObjectCase(toTitleWords(stem));
+  return fallback ? `${getProjectLabel(repo)} : ${fileVerb} ${fallback}` : undefined;
 }
 
 export function normalizeActivityKey(value: string): string {

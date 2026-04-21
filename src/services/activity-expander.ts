@@ -21,7 +21,9 @@ function buildSupplementalActivities(collection: CollectedActivity, limit: numbe
     const perRepo: string[] = [];
 
     for (const file of strongestSignalFiles(repo)) {
-      const candidate = buildFileActivity(repo, normalizeFilePath(file.path));
+      const candidate = buildFileActivity(repo, normalizeFilePath(file.path), {
+        gitStatuses: file.gitStatuses,
+      });
       if (!candidate) {
         continue;
       }

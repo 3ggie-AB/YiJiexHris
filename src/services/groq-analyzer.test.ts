@@ -500,3 +500,271 @@ test("analyzeActivity skips trivial composer and one-line changes without callin
   expect(report.activities).toHaveLength(0);
   expect(requestCount).toBe(0);
 });
+
+test("analyzeActivity prefers the more specific activity wording when candidates overlap", async () => {
+  globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    const schema = ((body.text as Record<string, unknown>)?.format as Record<string, unknown>)
+      ?.schema as Record<string, unknown>;
+    const properties = schema?.properties as Record<string, unknown>;
+
+    if (properties?.activities) {
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            productivityScore: 78,
+            overallSummary: "Fokus pada penambahan order code di Backend Kompetiva.",
+            focusAreas: ["Penambahan order code", "Penambahan kolom kode pada order"],
+            achievements: ["Menambahkan order code", "Menambahkan kolom kode dalam Order Individu dan B2B"],
+            blockers: [],
+            improvements: [],
+            nextPriorities: [],
+            activities: ["Backend Kompetiva : Menambahkan order code"],
+            confidence: "high",
+            projectInsights: [
+              {
+                project: "Backend Kompetiva",
+                status: "active",
+                summary: "Ada penyesuaian order code pada alur order.",
+                commitCount: 1,
+                changedFilesCount: 2,
+              },
+            ],
+          }),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        output_text: JSON.stringify({
+          summary: "Commit ini menambahkan kode order pada alur individu dan B2B.",
+          confidence: "high",
+          skipReason: "",
+          tasks: [
+            {
+              title: "Backend Kompetiva : Menambahkan order code",
+              summary: "Menambahkan penanda kode pada order.",
+              confidence: "medium",
+            },
+            {
+              title: "Backend Kompetiva : Menambahkan kolom kode dalam Order Individu dan B2B",
+              summary: "Menambahkan kolom kode untuk order individu dan B2B.",
+              confidence: "high",
+            },
+          ],
+        }),
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const commitFiles: RepoFileChangeStat[] = [
+    {
+      path: "models/order_individual.go",
+      additions: 8,
+      deletions: 1,
+      changeCount: 9,
+      sources: ["committed"],
+    },
+    {
+      path: "models/order_b2b.go",
+      additions: 9,
+      deletions: 1,
+      changeCount: 10,
+      sources: ["committed"],
+    },
+  ];
+
+  const collection: CollectedActivity = {
+    generatedAt: "2026-04-21T00:00:00.000Z",
+    reportDate: "2026-04-21",
+    timezone: "Asia/Jakarta",
+    repositories: [
+      createRepo({
+        name: "Backend Kompetiva",
+        displayName: "Backend Kompetiva",
+        path: "D:/projects/Backend-Kompetiva",
+        commitsToday: [
+          {
+            hash: "code1",
+            shortHash: "code1",
+            author: "User",
+            committedAt: "2026-04-21T10:00:00+07:00",
+            subject: "Menambahkan order code",
+          },
+        ],
+        commitDetails: [
+          createCommitDetail("code1", "code1", "Menambahkan order code", "2026-04-21T10:00:00+07:00", commitFiles),
+        ],
+        committedFilesToday: commitFiles.map((file) => file.path),
+        fileChangeStats: commitFiles,
+        lastCommit: "code1 - Menambahkan order code",
+      }),
+    ],
+    metrics: {
+      projectCount: 1,
+      activeProjectCount: 1,
+      reposWithCommitsToday: 1,
+      dirtyRepoCount: 0,
+      totalCommits: 1,
+      totalCommittedFiles: 2,
+      totalWorkingTreeFiles: 0,
+      uniqueFilesTouched: 2,
+    },
+  };
+
+  const report = await analyzeActivity(collection, createConfig());
+
+  expect(report.activities).toEqual(["Backend Kompetiva : Menambahkan kolom kode dalam Order Individu dan B2B"]);
+  expect(report.focusAreas).toEqual(["Penambahan order code"]);
+  expect(report.achievements).toEqual(["Menambahkan order code"]);
+});
+
+test("analyzeActivity keeps trivial working tree repository updates out of activities and project insights", async () => {
+  globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    const schema = ((body.text as Record<string, unknown>)?.format as Record<string, unknown>)
+      ?.schema as Record<string, unknown>;
+    const properties = schema?.properties as Record<string, unknown>;
+
+    if (properties?.activities) {
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            productivityScore: 35,
+            overallSummary: "API ERP GO mengalami update repository user kecil.",
+            focusAreas: ["Penyesuaian repository user"],
+            achievements: ["Memperbarui repository user"],
+            blockers: [],
+            improvements: [],
+            nextPriorities: [],
+            activities: ["API ERP GO : Memperbarui repository user"],
+            confidence: "medium",
+            projectInsights: [
+              {
+                project: "API ERP GO",
+                status: "active",
+                summary: "Update repository user dan handler terkait.",
+                commitCount: 0,
+                changedFilesCount: 2,
+              },
+            ],
+          }),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        output_text: JSON.stringify({
+          summary: "Perubahan hanya menyesuaikan nama kolom pada repository user.",
+          confidence: "medium",
+          skipReason: "",
+          tasks: [
+            {
+              title: "API ERP GO : Memperbarui repository user",
+              summary: "Hanya menyesuaikan nama kolom dan field pada repository user.",
+              confidence: "medium",
+            },
+          ],
+        }),
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const collection: CollectedActivity = {
+    generatedAt: "2026-04-21T00:00:00.000Z",
+    reportDate: "2026-04-21",
+    timezone: "Asia/Jakarta",
+    repositories: [
+      createRepo({
+        name: "api_erp",
+        displayName: "API ERP GO",
+        path: "D:/projects/api_erp",
+        commitsToday: [],
+        commitDetails: [],
+        committedFilesToday: [],
+        workingTreeFiles: [
+          {
+            path: "repositories/user_repo.go",
+            indexStatus: "M",
+            workTreeStatus: " ",
+            rawStatus: "M ",
+          },
+          {
+            path: "routes/routes.go",
+            indexStatus: " ",
+            workTreeStatus: "M",
+            rawStatus: " M",
+          },
+        ],
+        workingTreeFileChangeStats: [
+          {
+            path: "repositories/user_repo.go",
+            additions: 3,
+            deletions: 6,
+            changeCount: 9,
+            sources: ["working_tree"],
+            gitStatuses: ["M"],
+          },
+          {
+            path: "routes/routes.go",
+            additions: 1,
+            deletions: 0,
+            changeCount: 1,
+            sources: ["working_tree"],
+            gitStatuses: ["M"],
+          },
+        ],
+        fileChangeStats: [
+          {
+            path: "repositories/user_repo.go",
+            additions: 3,
+            deletions: 6,
+            changeCount: 9,
+            sources: ["working_tree"],
+            gitStatuses: ["M"],
+          },
+          {
+            path: "routes/routes.go",
+            additions: 1,
+            deletions: 0,
+            changeCount: 1,
+            sources: ["working_tree"],
+            gitStatuses: ["M"],
+          },
+        ],
+        diffStats: "2 files changed, 4 insertions(+), 6 deletions(-)",
+        lastCommit: "prev - Detail Order",
+        isDirty: true,
+      }),
+    ],
+    metrics: {
+      projectCount: 1,
+      activeProjectCount: 1,
+      reposWithCommitsToday: 0,
+      dirtyRepoCount: 1,
+      totalCommits: 0,
+      totalCommittedFiles: 0,
+      totalWorkingTreeFiles: 2,
+      uniqueFilesTouched: 2,
+    },
+  };
+
+  const report = await analyzeActivity(collection, createConfig());
+
+  expect(report.activities).toEqual([]);
+  expect(report.projectInsights).toEqual([
+    {
+      project: "API ERP GO",
+      status: "maintenance",
+      summary: "Perubahan di API ERP GO cenderung kecil, trivial, atau belum cukup kuat untuk dijadikan card.",
+      commitCount: 0,
+      changedFilesCount: 2,
+    },
+  ]);
+});

@@ -80,6 +80,41 @@ const ACTIVITY_STOP_WORDS = new Set([
   "service",
 ]);
 
+const ACTIVITY_GENERIC_WORDS = new Set([
+  "menambahkan",
+  "memperbarui",
+  "memperbaiki",
+  "merapikan",
+  "mengimplementasikan",
+  "menghapus",
+  "ubah",
+  "mengubah",
+  "menyesuaikan",
+  "membuat",
+  "menyiapkan",
+  "tambah",
+  "perbarui",
+  "perbaiki",
+  "rapikan",
+  "implementasi",
+  "update",
+  "fix",
+  "adjust",
+  "refactor",
+  "handler",
+  "view",
+  "tampilan",
+  "controller",
+  "service",
+  "model",
+  "repository",
+  "route",
+  "helper",
+  "endpoint",
+  "kolom",
+  "baru",
+]);
+
 function buildAnalysisSchema(activityLimit: number) {
   return {
     type: "object",
@@ -206,6 +241,66 @@ function limitStrings(items: string[] | undefined, max: number): string[] {
     .slice(0, max);
 }
 
+function extractActivitySuffix(activity: string): string {
+  const separatorIndex = activity.indexOf(":");
+  if (separatorIndex === -1) {
+    return activity.trim();
+  }
+
+  return activity.slice(separatorIndex + 1).trim();
+}
+
+function normalizeActivitySimilarityToken(token: string): string {
+  if (token === "code") {
+    return "kode";
+  }
+
+  if (token === "view") {
+    return "tampilan";
+  }
+
+  if (token === "webhooks") {
+    return "webhook";
+  }
+
+  return token;
+}
+
+function tokenizeActivityMeaning(activity: string): string[] {
+  return normalizeActivityKey(extractActivitySuffix(activity))
+    .split(" ")
+    .map((token) => normalizeActivitySimilarityToken(token.trim()))
+    .filter((token) => token.length >= 3 && !ACTIVITY_STOP_WORDS.has(token) && !ACTIVITY_GENERIC_WORDS.has(token));
+}
+
+function activitySpecificityScore(activity: string): number {
+  const suffix = extractActivitySuffix(activity);
+  const meaningTokens = tokenizeActivityMeaning(activity);
+  return meaningTokens.length * 10 + Math.min(suffix.length, 120);
+}
+
+function activityVerbPriority(activity: string): number {
+  const suffix = extractActivitySuffix(activity).toLowerCase();
+  if (
+    suffix.startsWith("mengimplementasikan") ||
+    suffix.startsWith("menambahkan") ||
+    suffix.startsWith("membuat") ||
+    suffix.startsWith("menghapus")
+  ) {
+    return 3;
+  }
+
+  if (suffix.startsWith("memperbarui") || suffix.startsWith("memperbaiki") || suffix.startsWith("mengubah")) {
+    return 2;
+  }
+
+  if (suffix.startsWith("menyesuaikan") || suffix.startsWith("merapikan")) {
+    return 1;
+  }
+
+  return 0;
+}
+
 function limitProjectInsights(items: ProjectInsight[] | undefined, max: number): ProjectInsight[] {
   return (items ?? [])
     .filter((item) => item && typeof item.project === "string" && typeof item.summary === "string")
@@ -223,20 +318,15 @@ function touchedFileCount(repo: RepoActivity): number {
 function normalizeProjectInsights(
   projectInsights: ProjectInsight[],
   collection: CollectedActivity,
-  units: AnalysisUnit[],
+  activeProjects: Set<string>,
 ): ProjectInsight[] {
   const lookup = new Map<string, RepoActivity>();
-  const signalUnitCountByProject = new Map<string, number>();
 
   for (const repo of collection.repositories) {
     lookup.set(repo.name, repo);
     if (repo.displayName) {
       lookup.set(repo.displayName, repo);
     }
-  }
-
-  for (const unit of units) {
-    signalUnitCountByProject.set(unit.project, (signalUnitCountByProject.get(unit.project) ?? 0) + 1);
   }
 
   return projectInsights.map((item) => {
@@ -246,13 +336,15 @@ function normalizeProjectInsights(
     }
 
     const projectLabel = getProjectLabel(repo);
-    const signalUnitCount = signalUnitCountByProject.get(projectLabel) ?? 0;
+    const isActive = activeProjects.has(projectLabel);
     const normalizedStatus =
-      signalUnitCount > 0 ? item.status : repo.isDirty || repo.commitsToday.length > 0 ? "maintenance" : "idle";
+      isActive ? item.status : repo.isDirty || repo.commitsToday.length > 0 ? "maintenance" : "idle";
     const normalizedSummary =
-      signalUnitCount > 0
+      isActive
         ? item.summary
-        : `Perubahan di ${projectLabel} cenderung kecil, trivial, atau belum cukup kuat untuk dijadikan card.`;
+        : repo.isDirty || repo.commitsToday.length > 0
+          ? `Perubahan di ${projectLabel} cenderung kecil, trivial, atau belum cukup kuat untuk dijadikan card.`
+          : `Tidak ada aktivitas signifikan yang terdeteksi pada ${projectLabel}.`;
 
     return {
       project: item.project,
@@ -544,6 +636,10 @@ function buildUnitPrompt(unit: AnalysisUnit): string {
 
 function normalizeVerbPrefix(value: string): string {
   return value
+    .replace(/^tambah\b/i, "Menambahkan")
+    .replace(/^perbarui\b/i, "Memperbarui")
+    .replace(/^perbaiki\b/i, "Memperbaiki")
+    .replace(/^rapikan\b/i, "Merapikan")
     .replace(/^implement\b/i, "Mengimplementasikan")
     .replace(/^set up\b/i, "Menyiapkan")
     .replace(/^setup\b/i, "Menyiapkan")
@@ -564,7 +660,8 @@ function normalizeVerbPrefix(value: string): string {
     .replace(/\bfeature\b/gi, "fitur")
     .replace(/\broutes and controllers\b/gi, "route dan controller")
     .replace(/\bflow and sorting logic\b/gi, "alur dan logika sorting")
-    .replace(/\bcolumn migration\b/gi, "migrasi kolom");
+    .replace(/\bcolumn migration\b/gi, "migrasi kolom")
+    .replace(/\beror\b/gi, "error");
 }
 
 function toSentenceCase(value: string): string {
@@ -576,6 +673,88 @@ function toSentenceCase(value: string): string {
   return `${trimmed[0]?.toUpperCase() ?? ""}${trimmed.slice(1)}`;
 }
 
+function toActivityObjectCase(raw: string): string {
+  return raw.replace(/[A-Za-z0-9]+/g, (word) => {
+    if (/^\d+$/.test(word) || /^[A-Z0-9]{2,}$/.test(word)) {
+      return word;
+    }
+
+    if (/^(api|uuid|pdf|ui|ux|id|otp|sql|db|hris|lsp|ppdb|erp)$/i.test(word)) {
+      return word.toUpperCase();
+    }
+
+    if (/^xendit$/i.test(word)) {
+      return "Xendit";
+    }
+
+    return word.toLowerCase();
+  });
+}
+
+function cleanupActivityObjectPhrase(raw: string): string {
+  const original = raw.replace(/\s+/g, " ").trim();
+  if (!original) {
+    return original;
+  }
+
+  let value = original;
+  value = value.replace(/^(Get|Post|Put|Patch|Delete|Create|Update|Set|Index|List|Show|Detail|Data)\s+/i, "");
+  if (/\bPer\b/i.test(value)) {
+    value = value.replace(/^Group\s+/i, "");
+  }
+  value = value.replace(/^Customer\s+(Income\b)/i, "$1");
+
+  return value.trim() || original;
+}
+
+function compressActivitySuffix(value: string): string {
+  let normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return normalized;
+  }
+
+  normalized = normalized
+    .replace(/^Tambah\s+/i, "Menambahkan ")
+    .replace(/^Perbarui\s+/i, "Memperbarui ")
+    .replace(/^Perbaiki\s+/i, "Memperbaiki ")
+    .replace(/^Rapikan\s+/i, "Merapikan ")
+    .replace(/\bAction untuk\b/gi, "action ");
+
+  const actionMatch = normalized.match(/^(Menambahkan|Memperbarui)\s+action\s+(.+)$/i);
+  if (actionMatch) {
+    const [, rawVerb = "", rawObject = ""] = actionMatch;
+    return `${toSentenceCase(rawVerb)} action ${toActivityObjectCase(rawObject)}`.replace(/\s+/g, " ").trim();
+  }
+
+  const roleMatch = normalized.match(
+    /^(Membuat|Menambahkan|Memperbarui|Menyesuaikan)\s+(View|Tampilan|Handler|Controller|Service|Model|Repository|Route|Konfigurasi|Helper|Script Browser)\s+(.+)$/i,
+  );
+
+  if (roleMatch) {
+    const [, rawVerb = "", rawRole = "", rawObject = ""] = roleMatch;
+    const verb = /^membuat$/i.test(rawVerb) ? "Menambahkan" : toSentenceCase(rawVerb);
+    const roleMap: Record<string, string> = {
+      view: "tampilan",
+      tampilan: "tampilan",
+      handler: "handler",
+      controller: "controller",
+      service: "service",
+      model: "model",
+      repository: "repository",
+      route: "route",
+      konfigurasi: "konfigurasi",
+      helper: "helper",
+      "script browser": "script browser",
+    };
+    const roleKey = rawRole.toLowerCase();
+    const role = roleMap[roleKey] ?? rawRole.toLowerCase();
+    const object = toActivityObjectCase(cleanupActivityObjectPhrase(rawObject));
+    return `${verb} ${role} ${object}`.replace(/\s+/g, " ").trim();
+  }
+
+  return normalized.replace(/\s+/g, " ").trim();
+}
+
 function normalizeActivityTitle(project: string, rawTitle: string): string {
   const cleaned = rawTitle.replace(/\s+/g, " ").trim();
   if (!cleaned) {
@@ -584,11 +763,11 @@ function normalizeActivityTitle(project: string, rawTitle: string): string {
 
   const separatorIndex = cleaned.indexOf(":");
   if (separatorIndex === -1) {
-    return `${project} : ${toSentenceCase(normalizeVerbPrefix(cleaned))}`;
+    return `${project} : ${toSentenceCase(compressActivitySuffix(normalizeVerbPrefix(cleaned)))}`;
   }
 
   const suffix = cleaned.slice(separatorIndex + 1).trim();
-  return `${project} : ${toSentenceCase(normalizeVerbPrefix(suffix || cleaned))}`;
+  return `${project} : ${toSentenceCase(compressActivitySuffix(normalizeVerbPrefix(suffix || cleaned)))}`;
 }
 
 function buildFallbackUnitTasks(unit: AnalysisUnit): UnitAnalysisTask[] {
@@ -613,6 +792,9 @@ function buildFallbackUnitTasks(unit: AnalysisUnit): UnitAnalysisTask[] {
         displayName: unit.project,
       },
       file.normalizedPath,
+      {
+        gitStatuses: file.gitStatuses,
+      },
     );
 
     if (!title) {
@@ -708,12 +890,216 @@ function isTaskConsistentWithUnit(title: string, unit: AnalysisUnit): boolean {
   return true;
 }
 
-function normalizeOverallSummary(text: string): string {
-  return text
+function isLowSignalTask(task: UnitAnalysisTask, unit: AnalysisUnit): boolean {
+  const normalizedTitle = task.title.toLowerCase();
+  const normalizedSummary = task.summary.toLowerCase();
+  const roles = new Set(unit.signalFiles.map((file) => file.role));
+  const onlyInfraRoles = [...roles].every((role) => ["repository", "route", "config", "helper"].includes(role));
+
+  if (
+    /(typo|rename|renaming|penamaan|nama kolom|rename kolom|rename field|rename property|rename variabel|sekadar|minor|trivial)/i.test(
+      normalizedTitle,
+    ) ||
+    /(typo|rename|renaming|penamaan|nama kolom|rename kolom|rename field|rename property|rename variabel|sekadar|minor|trivial|hanya menyesuaikan nama)/i.test(
+      normalizedSummary,
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    unit.totalChangeCount <= 10 &&
+    unit.sourceType === "working_tree" &&
+    onlyInfraRoles &&
+    /(repository|repo|route|konfigurasi|helper)/i.test(normalizedTitle)
+  ) {
+    return true;
+  }
+
+  if (
+    unit.totalChangeCount <= 12 &&
+    onlyInfraRoles &&
+    /(repository|repo)/i.test(normalizedTitle) &&
+    !/(endpoint|query|filter|auth|permission|role|payment|webhook)/i.test(normalizedTitle)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeUnitTasks(tasks: UnitAnalysisTask[], unit: AnalysisUnit): UnitAnalysisTask[] {
+  return tasks
+    .map((task) => ({
+      title: normalizeActivityTitle(unit.project, task.title),
+      summary: task.summary.trim(),
+      confidence: task.confidence,
+    }))
+    .filter((task) => isTaskConsistentWithUnit(task.title, unit))
+    .filter((task) => !isLowSignalTask(task, unit));
+}
+
+function normalizeOverallSummary(text: string, activeProjects: Set<string>): string {
+  let normalized = text
     .replace(/\bseluruh tim engineering\b/gi, "developer")
     .replace(/\btim engineering\b/gi, "developer")
     .replace(/\bpada hari ini, tim\b/gi, "Pada hari ini, developer")
     .replace(/\btim\b/gi, "developer");
+
+  if (activeProjects.size > 0) {
+    normalized = normalized
+      .replace(/\s*[A-Z][^.!?]*repositori tetap dirty[^.!?]*\.?/gi, "")
+      .replace(/\s+[,.]/g, (match) => match.trim())
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  return normalized;
+}
+
+function buildActiveProjectSet(activities: string[]): Set<string> {
+  return new Set(activities.map((item) => extractProjectFromActivity(item)).filter(Boolean));
+}
+
+function choosePreferredCandidate(current: CandidateActivity, candidate: CandidateActivity): CandidateActivity {
+  const currentWeight = confidenceWeight(current.confidence);
+  const nextWeight = confidenceWeight(candidate.confidence);
+  if (nextWeight !== currentWeight) {
+    return nextWeight > currentWeight ? candidate : current;
+  }
+
+  const currentSpecificity = activitySpecificityScore(current.title);
+  const nextSpecificity = activitySpecificityScore(candidate.title);
+  if (nextSpecificity !== currentSpecificity) {
+    return nextSpecificity > currentSpecificity ? candidate : current;
+  }
+
+  if (candidate.totalChangeCount !== current.totalChangeCount) {
+    return candidate.totalChangeCount > current.totalChangeCount ? candidate : current;
+  }
+
+  const currentVerbPriority = activityVerbPriority(current.title);
+  const nextVerbPriority = activityVerbPriority(candidate.title);
+  if (nextVerbPriority !== currentVerbPriority) {
+    return nextVerbPriority > currentVerbPriority ? candidate : current;
+  }
+
+  return candidate.title.length > current.title.length ? candidate : current;
+}
+
+function areCandidateScopesSimilar(left: CandidateActivity, right: CandidateActivity): boolean {
+  if (left.project !== right.project) {
+    return false;
+  }
+
+  const leftKey = normalizeActivityKey(left.title);
+  const rightKey = normalizeActivityKey(right.title);
+  if (leftKey === rightKey) {
+    return true;
+  }
+
+  const leftTokens = tokenizeActivityMeaning(left.title);
+  const rightTokens = tokenizeActivityMeaning(right.title);
+  if (leftTokens.length === 0 || rightTokens.length === 0) {
+    return false;
+  }
+
+  const rightTokenSet = new Set(rightTokens);
+  const overlap = leftTokens.filter((token) => rightTokenSet.has(token)).length;
+  const overlapRatio = overlap / Math.max(leftTokens.length, rightTokens.length, 1);
+  const subset =
+    leftTokens.every((token) => rightTokenSet.has(token)) || rightTokens.every((token) => new Set(leftTokens).has(token));
+
+  if (subset && overlap >= 2) {
+    return true;
+  }
+
+  return overlap >= 2 && overlapRatio >= 0.6;
+}
+
+function dedupeNarrativeItems(items: string[], max: number): string[] {
+  const output: string[] = [];
+
+  for (const item of items.map((entry) => entry.trim()).filter(Boolean)) {
+    const candidateTokens = tokenizeActivityMeaning(item);
+    const isDuplicate = output.some((existing) => {
+      const existingTokens = tokenizeActivityMeaning(existing);
+      if (candidateTokens.length === 0 || existingTokens.length === 0) {
+        return normalizeActivityKey(candidateTokens.join(" ")) === normalizeActivityKey(existingTokens.join(" "));
+      }
+
+      const candidateSet = new Set(candidateTokens);
+      const existingSet = new Set(existingTokens);
+      const overlap = candidateTokens.filter((token) => existingSet.has(token)).length;
+      const overlapRatio = overlap / Math.max(candidateTokens.length, existingTokens.length, 1);
+      const subset =
+        candidateTokens.every((token) => existingSet.has(token)) || existingTokens.every((token) => candidateSet.has(token));
+      return overlap >= 2 && (subset || overlapRatio >= 0.75);
+    });
+
+    if (isDuplicate) {
+      continue;
+    }
+
+    output.push(item);
+    if (output.length >= max) {
+      break;
+    }
+  }
+
+  return output;
+}
+
+function buildFallbackProjectInsights(collection: CollectedActivity, activeProjects: Set<string>): ProjectInsight[] {
+  return collection.repositories.map((repo) => {
+    const project = getProjectLabel(repo);
+    const isActive = activeProjects.has(project);
+    const status: ProjectInsight["status"] =
+      repo.errors.length > 0 ? "blocked" : isActive ? "active" : repo.isDirty ? "maintenance" : "idle";
+
+    const summary = isActive
+      ? `Aktivitas signifikan terdeteksi pada ${project}.`
+      : repo.commitsToday.length > 0 || repo.isDirty
+        ? `Perubahan di ${project} cenderung kecil, trivial, atau belum cukup kuat untuk dijadikan card.`
+        : `Tidak ada aktivitas signifikan yang terdeteksi pada ${project}.`;
+
+    return {
+      project,
+      status,
+      summary,
+      commitCount: repo.commitsToday.length,
+      changedFilesCount: touchedFileCount(repo),
+    };
+  });
+}
+
+function buildFallbackReport(
+  collection: CollectedActivity,
+  activities: string[],
+  activeProjects: Set<string>,
+): AiAnalysisReport {
+  const hasMeaningfulActivities = activities.length > 0;
+  const projectNames = Array.from(activeProjects).slice(0, 4);
+  const projectSummary = projectNames.length > 0 ? ` pada ${projectNames.join(", ")}` : "";
+
+  return {
+    generatedAt: new Date().toISOString(),
+    reportDate: collection.reportDate,
+    productivityScore: hasMeaningfulActivities ? 55 : 15,
+    overallSummary: hasMeaningfulActivities
+      ? `Aktivitas hari ini berhasil dipetakan menjadi ${activities.length} task signifikan${projectSummary}, tetapi ringkasan akhir AI tidak tersedia sehingga report memakai fallback lokal.`
+      : "Aktivitas yang terdeteksi hari ini didominasi perubahan kecil, konfigurasi, dependency, atau noise sehingga tidak ada task utama yang kuat untuk dijadikan card.",
+    focusAreas: hasMeaningfulActivities ? projectNames.slice(0, 6) : [],
+    achievements: hasMeaningfulActivities ? activities.slice(0, 8) : [],
+    blockers: [],
+    improvements: hasMeaningfulActivities
+      ? ["Perkuat commit message agar pemetaan task otomatis makin presisi."]
+      : ["Gabungkan perubahan kecil dalam commit yang lebih jelas agar signal task tidak tenggelam oleh noise."],
+    nextPriorities: [],
+    activities,
+    confidence: hasMeaningfulActivities ? "medium" : "low",
+    projectInsights: buildFallbackProjectInsights(collection, activeProjects),
+  };
 }
 
 async function requestUnitAnalysis(unit: AnalysisUnit, config: AppConfig): Promise<UnitAnalysisResult> {
@@ -730,6 +1116,11 @@ async function requestUnitAnalysis(unit: AnalysisUnit, config: AppConfig): Promi
       "Jika dalam satu unit ada beberapa scope yang berbeda, pisahkan maksimal 3 task.",
       "Jangan memecah satu fitur menjadi daftar file-file pendukungnya.",
       "Setiap title wajib memakai format: NAMA_PROJECT : aksi spesifik.",
+      "Title harus ringkas dan natural, idealnya 4-10 kata setelah prefix project.",
+      "Jika perubahan terutama pada satu file penting, sebutkan jenis hasilnya secara singkat seperti handler, tampilan, service, action, atau endpoint.",
+      "Contoh title yang baik: Dashboard ERP : Menambahkan tampilan request check progress; API ERP GO : Memperbarui handler tracking payment per customer.",
+      "Jika unit hanya berisi rename kecil, typo, penyesuaian nama kolom, atau syncing field yang remeh, kembalikan tasks kosong.",
+      "Jangan membuat title generik seperti memperbarui repository user bila perubahan hanya minor dan tidak mengubah perilaku penting.",
       "Gunakan nama project yang sudah diberikan pada field Project.",
       "Tulis summary secara deskriptif, tetapi tetap berbasis bukti.",
     ],
@@ -737,14 +1128,11 @@ async function requestUnitAnalysis(unit: AnalysisUnit, config: AppConfig): Promi
     1200,
   );
 
-  const normalizedTasks = (parsed.tasks ?? [])
-    .map((task) => ({
-      title: normalizeActivityTitle(unit.project, task.title),
-      summary: task.summary.trim(),
-      confidence: task.confidence,
-    }))
-    .filter((task) => isTaskConsistentWithUnit(task.title, unit));
-  const tasks = normalizedTasks.length > 0 ? normalizedTasks : buildFallbackUnitTasks(unit);
+  const normalizedTasks = normalizeUnitTasks(parsed.tasks ?? [], unit);
+  const tasks =
+    normalizedTasks.length > 0 || (parsed.tasks ?? []).length > 0
+      ? normalizedTasks
+      : normalizeUnitTasks(buildFallbackUnitTasks(unit), unit);
 
   return {
     unitId: unit.id,
@@ -861,9 +1249,15 @@ async function requestFinalAnalysis(
       "Hindari bahasa Inggris bila ada padanan Bahasa Indonesia yang wajar, kecuali istilah teknis yang memang lebih natural dibiarkan.",
       "Gunakan hanya bukti dari repo overview, unit analysis summary, dan candidate activities yang diberikan.",
       "Activities harus berupa task yang sempit, konkret, deskriptif, dan layak menjadi satu card kerja.",
+      "Tulis activity dengan gaya ringkas seperti catatan kerja harian, bukan seperti nama file mentah.",
+      "Jika activity terutama menggambarkan perubahan file tertentu, cukup sebut jenis hasil dan konteks utamanya secara singkat.",
+      "Contoh activity yang baik: Backend Kompetiva : Merapikan dan memperbarui handler order individual; Dashboard ERP : Menambahkan tampilan request check progress.",
       "Jangan membuat task dari update dependency, composer, lockfile, env, log, file dokumen, asset generated, atau perubahan satu baris yang tidak substantif.",
       "Jangan gabungkan dua kandidat dengan scope berbeda menjadi satu item.",
       "Boleh menggabungkan hanya jika dua kandidat jelas duplikat atau hanya beda wording.",
+      "Jika ada dua kandidat yang satu scope, pilih wording yang paling spesifik dan buang yang lebih generik.",
+      "Jangan menyebut repo yang hanya dirty atau punya perubahan trivial sebagai fokus utama di overall summary.",
+      "Untuk project insight yang tidak punya aktivitas signifikan, pakai nada maintenance/trivial dan jangan mengarang ringkasan pekerjaan.",
       "Activities sebaiknya berasal dari candidate activities; kamu boleh merapikan kalimatnya tanpa mengubah scope.",
       `Jumlah activities maksimum ${activityLimit} item, tetapi boleh lebih sedikit bila bukti kuatnya memang sedikit.`,
       "Nilai produktivitas secara konservatif jika bukti signifikan ternyata sedikit.",
@@ -901,21 +1295,31 @@ function normalizeCandidateActivities(results: UnitAnalysisResult[], unitLookup:
         continue;
       }
 
-      const currentWeight = confidenceWeight(current.confidence);
-      const nextWeight = confidenceWeight(candidate.confidence);
-      if (
-        nextWeight > currentWeight ||
-        (nextWeight === currentWeight && candidate.totalChangeCount > current.totalChangeCount)
-      ) {
-        output.set(key, candidate);
-      }
+      output.set(key, choosePreferredCandidate(current, candidate));
     }
   }
 
-  return [...output.values()].sort((left, right) => {
+  const deduped: CandidateActivity[] = [];
+
+  for (const candidate of output.values()) {
+    const existingIndex = deduped.findIndex((item) => areCandidateScopesSimilar(item, candidate));
+    if (existingIndex === -1) {
+      deduped.push(candidate);
+      continue;
+    }
+
+    deduped[existingIndex] = choosePreferredCandidate(deduped[existingIndex]!, candidate);
+  }
+
+  return deduped.sort((left, right) => {
     const weightDiff = confidenceWeight(right.confidence) - confidenceWeight(left.confidence);
     if (weightDiff !== 0) {
       return weightDiff;
+    }
+
+    const specificityDiff = activitySpecificityScore(right.title) - activitySpecificityScore(left.title);
+    if (specificityDiff !== 0) {
+      return specificityDiff;
     }
 
     return right.totalChangeCount - left.totalChangeCount;
@@ -934,7 +1338,7 @@ function extractProjectFromActivity(activity: string): string {
 function tokenizeActivity(activity: string): string[] {
   return normalizeActivityKey(activity)
     .split(" ")
-    .map((token) => token.trim())
+    .map((token) => normalizeActivitySimilarityToken(token.trim()))
     .filter((token) => token.length >= 3 && !ACTIVITY_STOP_WORDS.has(token));
 }
 
@@ -1012,65 +1416,6 @@ function mergeActivities(parsed: string[], candidates: CandidateActivity[], limi
   return output;
 }
 
-function buildFallbackProjectInsights(collection: CollectedActivity, units: AnalysisUnit[]): ProjectInsight[] {
-  const unitCountByProject = new Map<string, number>();
-
-  for (const unit of units) {
-    unitCountByProject.set(unit.project, (unitCountByProject.get(unit.project) ?? 0) + 1);
-  }
-
-  return collection.repositories.map((repo) => {
-    const project = getProjectLabel(repo);
-    const signalUnitCount = unitCountByProject.get(project) ?? 0;
-    const status: ProjectInsight["status"] =
-      repo.errors.length > 0 ? "blocked" : signalUnitCount > 0 ? "active" : repo.isDirty ? "maintenance" : "idle";
-
-    const summary =
-      signalUnitCount > 0
-        ? `${signalUnitCount} unit perubahan substantif terdeteksi pada ${project}.`
-        : repo.commitsToday.length > 0 || repo.isDirty
-          ? `Perubahan di ${project} cenderung kecil, trivial, atau belum cukup kuat untuk dijadikan card.`
-          : `Tidak ada aktivitas signifikan yang terdeteksi pada ${project}.`;
-
-    return {
-      project,
-      status,
-      summary,
-      commitCount: repo.commitsToday.length,
-      changedFilesCount: touchedFileCount(repo),
-    };
-  });
-}
-
-function buildFallbackReport(
-  collection: CollectedActivity,
-  activities: string[],
-  units: AnalysisUnit[],
-): AiAnalysisReport {
-  const hasMeaningfulActivities = activities.length > 0;
-  const projectNames = Array.from(new Set(activities.map((item) => item.split(":")[0]?.trim()).filter(Boolean))).slice(0, 4);
-  const projectSummary = projectNames.length > 0 ? ` pada ${projectNames.join(", ")}` : "";
-
-  return {
-    generatedAt: new Date().toISOString(),
-    reportDate: collection.reportDate,
-    productivityScore: hasMeaningfulActivities ? 55 : 15,
-    overallSummary: hasMeaningfulActivities
-      ? `Aktivitas hari ini berhasil dipetakan menjadi ${activities.length} task signifikan${projectSummary}, tetapi ringkasan akhir AI tidak tersedia sehingga report memakai fallback lokal.`
-      : "Aktivitas yang terdeteksi hari ini didominasi perubahan kecil, konfigurasi, dependency, atau noise sehingga tidak ada task utama yang kuat untuk dijadikan card.",
-    focusAreas: hasMeaningfulActivities ? Array.from(new Set(activities.map((item) => item.split(":")[0]?.trim()).filter(Boolean))).slice(0, 6) : [],
-    achievements: hasMeaningfulActivities ? activities.slice(0, 8) : [],
-    blockers: [],
-    improvements: hasMeaningfulActivities
-      ? ["Perkuat commit message agar pemetaan task otomatis makin presisi."]
-      : ["Gabungkan perubahan kecil dalam commit yang lebih jelas agar signal task tidak tenggelam oleh noise."],
-    nextPriorities: [],
-    activities,
-    confidence: hasMeaningfulActivities ? "medium" : "low",
-    projectInsights: buildFallbackProjectInsights(collection, units),
-  };
-}
-
 export async function analyzeActivity(
   collection: CollectedActivity,
   config: AppConfig,
@@ -1092,16 +1437,18 @@ export async function analyzeActivity(
         summary: "",
         confidence: "low",
         skipReason: message,
-        tasks: buildFallbackUnitTasks(unit),
+        tasks: normalizeUnitTasks(buildFallbackUnitTasks(unit), unit),
       });
     }
   }
 
   const candidates = normalizeCandidateActivities(unitResults, unitLookup);
+  const candidateActivities = candidates.map((candidate) => candidate.title);
+  const candidateProjects = buildActiveProjectSet(candidateActivities);
 
   if (units.length === 0) {
     const activities = expandReportActivities([], collection, requestedLimit);
-    return buildFallbackReport(collection, activities, units);
+    return buildFallbackReport(collection, activities, buildActiveProjectSet(activities));
   }
 
   let activityLimit = requestedLimit;
@@ -1122,30 +1469,28 @@ export async function analyzeActivity(
   }
 
   if (!parsed) {
-    const fallbackActivities = expandReportActivities(
-      candidates.map((candidate) => candidate.title),
-      collection,
-      requestedLimit,
-    );
-    return buildFallbackReport(collection, fallbackActivities, units);
+    const fallbackActivities = expandReportActivities(candidateActivities, collection, requestedLimit);
+    return buildFallbackReport(collection, fallbackActivities, buildActiveProjectSet(fallbackActivities));
   }
+
+  const mergedCandidateActivities = mergeActivities(limitStrings(parsed.activities, activityLimit), candidates, requestedLimit);
+  const mergedActivities =
+    mergedCandidateActivities.length > 0 ? expandReportActivities(mergedCandidateActivities, collection, requestedLimit) : [];
+  const activeProjects = buildActiveProjectSet(mergedActivities);
+  const effectiveProjects = activeProjects.size > 0 ? activeProjects : candidateProjects;
 
   return {
     generatedAt: new Date().toISOString(),
     reportDate: collection.reportDate,
     productivityScore: parsed.productivityScore,
-    overallSummary: normalizeOverallSummary(parsed.overallSummary),
-    focusAreas: limitStrings(parsed.focusAreas, 6),
-    achievements: limitStrings(parsed.achievements, 8),
+    overallSummary: normalizeOverallSummary(parsed.overallSummary, effectiveProjects),
+    focusAreas: dedupeNarrativeItems(limitStrings(parsed.focusAreas, 12), 6),
+    achievements: dedupeNarrativeItems(limitStrings(parsed.achievements, 16), 8),
     blockers: limitStrings(parsed.blockers, 6),
-    improvements: limitStrings(parsed.improvements, 6),
-    nextPriorities: limitStrings(parsed.nextPriorities, 6),
-    activities: expandReportActivities(
-      mergeActivities(limitStrings(parsed.activities, activityLimit), candidates, requestedLimit),
-      collection,
-      requestedLimit,
-    ),
+    improvements: dedupeNarrativeItems(limitStrings(parsed.improvements, 12), 6),
+    nextPriorities: dedupeNarrativeItems(limitStrings(parsed.nextPriorities, 12), 6),
+    activities: mergedActivities,
     confidence: parsed.confidence,
-    projectInsights: normalizeProjectInsights(limitProjectInsights(parsed.projectInsights, 30), collection, units),
+    projectInsights: normalizeProjectInsights(limitProjectInsights(parsed.projectInsights, 30), collection, effectiveProjects),
   };
 }

@@ -18,6 +18,15 @@ interface GitCommandResult {
   stderr: string;
 }
 
+interface ParsedCommitBlock extends GitCommit {
+  lines: string[];
+}
+
+interface ParsedGitPathStatus {
+  path: string;
+  gitStatus: string;
+}
+
 function normalizeAliasKey(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
@@ -111,6 +120,7 @@ function parseFileChangeStats(
         deletions: 0,
         changeCount: 0,
         sources: [],
+        gitStatuses: [],
       } satisfies RepoFileChangeStat);
 
     current.additions += additions;
@@ -139,6 +149,7 @@ function mergeFileChangeStats(...groups: RepoFileChangeStat[][]): RepoFileChange
           deletions: 0,
           changeCount: 0,
           sources: [],
+          gitStatuses: [],
         } satisfies RepoFileChangeStat);
 
       current.additions += item.additions;
@@ -147,6 +158,11 @@ function mergeFileChangeStats(...groups: RepoFileChangeStat[][]): RepoFileChange
       for (const source of item.sources) {
         if (!current.sources.includes(source)) {
           current.sources.push(source);
+        }
+      }
+      for (const gitStatus of item.gitStatuses ?? []) {
+        if (!current.gitStatuses?.includes(gitStatus)) {
+          current.gitStatuses?.push(gitStatus);
         }
       }
 
@@ -167,7 +183,7 @@ function formatShortDiffStats(items: RepoFileChangeStat[]): string | undefined {
   return `${items.length} file(s) changed, ${additions} insertion(s)(+), ${deletions} deletion(s)(-)`;
 }
 
-function parseCommitDetails(raw: string): RepoCommitDetail[] {
+function parseCommitBlocks(raw: string): ParsedCommitBlock[] {
   return raw
     .split("\x1e")
     .map((chunk) => chunk.trim())
@@ -176,7 +192,6 @@ function parseCommitDetails(raw: string): RepoCommitDetail[] {
       const lines = chunk.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
       const [header = "", ...statLines] = lines;
       const [hash = "", shortHash = "", author = "", committedAt = "", subject = ""] = header.split("\x1f");
-      const fileChangeStats = parseFileChangeStats(statLines.join("\n"), "committed");
 
       return {
         hash,
@@ -184,9 +199,127 @@ function parseCommitDetails(raw: string): RepoCommitDetail[] {
         author,
         committedAt,
         subject,
-        files: fileChangeStats.map((item) => item.path),
-        fileChangeStats,
-        diffStats: formatShortDiffStats(fileChangeStats),
+        lines: statLines,
+      } satisfies ParsedCommitBlock;
+    })
+    .filter((commit) => Boolean(commit.hash));
+}
+
+function normalizeGitStatus(rawStatus: string): string | undefined {
+  const trimmed = rawStatus.trim().toUpperCase();
+  if (!trimmed || trimmed === "!") {
+    return undefined;
+  }
+
+  return trimmed === "?" ? "A" : trimmed[0];
+}
+
+function parseNameStatusLines(lines: string[]): ParsedGitPathStatus[] {
+  const output: ParsedGitPathStatus[] = [];
+
+  for (const line of lines.map((entry) => entry.trim()).filter(Boolean)) {
+    const parts = line.split("\t");
+    const gitStatus = normalizeGitStatus(parts[0] ?? "");
+    if (!gitStatus) {
+      continue;
+    }
+
+    const rawPath = gitStatus === "R" || gitStatus === "C" ? parts.at(-1) ?? "" : parts.slice(1).join("\t");
+    const filePath = normalizeGitPath(rawPath);
+    if (!filePath) {
+      continue;
+    }
+
+    output.push({
+      path: filePath,
+      gitStatus,
+    });
+  }
+
+  return output;
+}
+
+function mergeGitStatusesIntoFileStats(
+  fileStats: RepoFileChangeStat[],
+  pathStatuses: ParsedGitPathStatus[],
+  source: RepoFileChangeStat["sources"][number],
+): RepoFileChangeStat[] {
+  const output = new Map<string, RepoFileChangeStat>(
+    fileStats.map((item) => [
+      item.path,
+      {
+        ...item,
+        gitStatuses: [...(item.gitStatuses ?? [])],
+      },
+    ]),
+  );
+
+  for (const pathStatus of pathStatuses) {
+    const current =
+      output.get(pathStatus.path) ??
+      ({
+        path: pathStatus.path,
+        additions: 0,
+        deletions: 0,
+        changeCount: 0,
+        sources: [],
+        gitStatuses: [],
+      } satisfies RepoFileChangeStat);
+
+    if (!current.sources.includes(source)) {
+      current.sources.push(source);
+    }
+
+    if (!current.gitStatuses?.includes(pathStatus.gitStatus)) {
+      current.gitStatuses?.push(pathStatus.gitStatus);
+    }
+
+    output.set(pathStatus.path, current);
+  }
+
+  return Array.from(output.values());
+}
+
+function toWorkingTreePathStatuses(workingTreeFiles: WorkingTreeFile[]): ParsedGitPathStatus[] {
+  const output: ParsedGitPathStatus[] = [];
+
+  for (const file of workingTreeFiles) {
+    const statuses = new Set(
+      [file.indexStatus, file.workTreeStatus]
+        .map((status) => normalizeGitStatus(status))
+        .filter((status): status is string => Boolean(status)),
+    );
+
+    for (const gitStatus of statuses) {
+      output.push({
+        path: normalizeGitPath(file.path),
+        gitStatus,
+      });
+    }
+  }
+
+  return output;
+}
+
+function parseCommitDetails(rawNumStat: string, rawNameStatus: string): RepoCommitDetail[] {
+  const numStatBlocks = parseCommitBlocks(rawNumStat);
+  const nameStatusBlocks = new Map(parseCommitBlocks(rawNameStatus).map((block) => [block.hash, block]));
+
+  return numStatBlocks
+    .map((block) => {
+      const fileChangeStats = parseFileChangeStats(block.lines.join("\n"), "committed");
+      const pathStatuses = parseNameStatusLines(nameStatusBlocks.get(block.hash)?.lines ?? []);
+      const mergedFileChangeStats = mergeGitStatusesIntoFileStats(fileChangeStats, pathStatuses, "committed");
+
+      return {
+        hash: block.hash,
+        shortHash: block.shortHash,
+        author: block.author,
+        committedAt: block.committedAt,
+        subject: block.subject,
+        files: mergedFileChangeStats.map((item) => item.path),
+        fileChangeStats: mergedFileChangeStats,
+        diffStats: formatShortDiffStats(mergedFileChangeStats),
       } satisfies RepoCommitDetail;
     })
     .filter((commit) => Boolean(commit.hash));
@@ -229,6 +362,17 @@ function collectRepository(repoPath: string, config: AppConfig): RepoActivity {
     errors.push(commitDetailsLog.stderr);
   }
 
+  const commitNameStatusLog = runGit(repoPath, [
+    "log",
+    "--since=midnight",
+    "--name-status",
+    "--date=iso-strict",
+    "--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%ad%x1f%s",
+  ]);
+  if (!commitNameStatusLog.ok && commitNameStatusLog.stderr) {
+    errors.push(commitNameStatusLog.stderr);
+  }
+
   const status = runGit(repoPath, ["status", "--porcelain=v1", "-uall"]);
   if (!status.ok && status.stderr) {
     errors.push(status.stderr);
@@ -249,13 +393,18 @@ function collectRepository(repoPath: string, config: AppConfig): RepoActivity {
     errors.push(lastCommit.stderr);
   }
 
-  const commitDetails = parseCommitDetails(commitDetailsLog.stdout);
+  const workingTreeFiles = parseWorkingTree(status.stdout);
+  const commitDetails = parseCommitDetails(commitDetailsLog.stdout, commitNameStatusLog.stdout);
   const commitsToday: GitCommit[] = commitDetails.map(({ files: _files, fileChangeStats: _stats, diffStats, ...commit }) => ({
     ...commit,
   }));
   const committedFilesToday = parseFileList(commitDetails.flatMap((commit) => commit.files).join("\n"));
   const committedFileChangeStats = mergeFileChangeStats(...commitDetails.map((commit) => commit.fileChangeStats));
-  const workingTreeFileChangeStats = parseFileChangeStats(workingTreeFileStats.stdout, "working_tree");
+  const workingTreeFileChangeStats = mergeGitStatusesIntoFileStats(
+    parseFileChangeStats(workingTreeFileStats.stdout, "working_tree"),
+    toWorkingTreePathStatuses(workingTreeFiles),
+    "working_tree",
+  );
 
   return {
     name,
@@ -265,7 +414,7 @@ function collectRepository(repoPath: string, config: AppConfig): RepoActivity {
     commitsToday,
     commitDetails,
     committedFilesToday,
-    workingTreeFiles: parseWorkingTree(status.stdout),
+    workingTreeFiles,
     workingTreeFileChangeStats,
     fileChangeStats: mergeFileChangeStats(
       committedFileChangeStats,
