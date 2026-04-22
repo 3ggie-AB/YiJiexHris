@@ -1,21 +1,30 @@
 import React, { startTransition, useDeferredValue, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { Badge } from "./components/ui/badge";
+import { Button, buttonVariants, type ButtonSize, type ButtonVariant } from "./components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
+import { Input } from "./components/ui/input";
+import { cn } from "./lib/utils";
 import type {
   AnalyzeResponse,
   CommitDetailResponse,
   DashboardResponse,
   FileContentResponse,
+  HistoryResponse,
   PublicGitHubUser,
   RecentRunSummary,
   RunDetailResponse,
   SessionResponse,
   UpdateRepositoriesResponse,
 } from "./api-types";
+import type { GitHubRepositoryOption } from "./models";
 
 type Route =
   | { kind: "home" }
   | { kind: "dashboard" }
+  | { kind: "history" }
   | { kind: "run"; id: string }
   | { kind: "commit"; owner: string; repo: string; sha: string }
   | { kind: "file"; owner: string; repo: string; path: string; ref: string }
@@ -36,6 +45,10 @@ function parseRoute(): Route {
 
   if (pathname === "/dashboard") {
     return { kind: "dashboard" };
+  }
+
+  if (pathname === "/history") {
+    return { kind: "history" };
   }
 
   const runMatch = pathname.match(/^\/runs\/([^/]+)$/);
@@ -73,10 +86,6 @@ function getFlashState(): FlashState {
   const notice = params.get("notice")?.trim() || undefined;
   const error = params.get("error")?.trim() || undefined;
   return { notice, error };
-}
-
-function classNames(...values: Array<string | false | null | undefined>): string {
-  return values.filter(Boolean).join(" ");
 }
 
 function formatDateTime(value: string | Date | undefined): string {
@@ -214,85 +223,278 @@ function useRouteData<T>(loadKey: string | null, loader: (() => Promise<T>) | nu
   return { data, setData, loading, error };
 }
 
-function StatCard(props: { label: string; value: string | number; description: string; tone?: "light" | "dark" | "accent" }) {
+function getUserDisplayName(user: PublicGitHubUser): string {
+  return user.displayName || user.username;
+}
+
+function getUserInitial(user: PublicGitHubUser | null): string {
+  if (!user) {
+    return "Y";
+  }
+
+  const source = user.displayName || user.username || "Y";
+  return source.trim().charAt(0).toUpperCase() || "Y";
+}
+
+function repoVisibilityVariant(visibility: GitHubRepositoryOption["visibility"]): "warning" | "secondary" {
+  return visibility === "private" ? "warning" : "secondary";
+}
+
+function repoAccessVariant(accessType: GitHubRepositoryOption["accessType"]): "default" | "outline" {
+  return accessType === "shared" ? "default" : "outline";
+}
+
+function repoPermissionVariant(permissionLevel: GitHubRepositoryOption["permissionLevel"]): "danger" | "default" | "secondary" {
+  if (permissionLevel === "admin") {
+    return "danger";
+  }
+
+  if (permissionLevel === "write") {
+    return "default";
+  }
+
+  return "secondary";
+}
+
+function confidenceVariant(confidence: RecentRunSummary["confidence"]): "success" | "warning" | "danger" {
+  if (confidence === "high") {
+    return "success";
+  }
+
+  if (confidence === "medium") {
+    return "warning";
+  }
+
+  return "danger";
+}
+
+function insightVariant(status: RunDetailResponse["run"]["report"]["projectInsights"][number]["status"]): "success" | "warning" | "danger" | "secondary" {
+  if (status === "active") {
+    return "success";
+  }
+
+  if (status === "maintenance") {
+    return "warning";
+  }
+
+  if (status === "blocked") {
+    return "danger";
+  }
+
+  return "secondary";
+}
+
+function ActionLink(
+  props: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+    href: string;
+    variant?: ButtonVariant;
+    size?: ButtonSize;
+  },
+) {
+  const { className, variant, size, ...rest } = props;
+  return <a className={buttonVariants({ variant, size, className })} {...rest} />;
+}
+
+function Eyebrow(props: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("text-[11px] font-semibold uppercase tracking-[0.3em] text-cyan-200/80", props.className)}>{props.children}</div>;
+}
+
+function MetricCard(props: {
+  label: string;
+  value: string | number;
+  description: string;
+  tone?: "default" | "cool" | "highlight";
+}) {
   const toneClass =
-    props.tone === "dark"
-      ? "bg-ink text-white border-white/10"
-      : props.tone === "accent"
-        ? "bg-[linear-gradient(135deg,rgba(53,199,160,0.16),rgba(23,49,56,0.92))] text-white border-teal/20"
-        : "bg-coal/80 text-white border-white/10";
+    props.tone === "cool"
+      ? "border-cyan-300/18 bg-[linear-gradient(180deg,rgba(11,33,58,0.88),rgba(6,14,29,0.86))]"
+      : props.tone === "highlight"
+        ? "border-sky-300/18 bg-[linear-gradient(135deg,rgba(67,56,202,0.22),rgba(103,232,249,0.18),rgba(9,16,31,0.9))]"
+        : "border-white/10 bg-white/[0.04]";
 
   return (
-    <article className={classNames("rounded-[1.8rem] border p-5 shadow-panel backdrop-blur", toneClass)}>
-      <div className={classNames("text-[11px] font-semibold uppercase tracking-[0.24em]", props.tone === "dark" ? "text-white/60" : "text-teal-300")}>
-        {props.label}
-      </div>
-      <div className="mt-3 text-3xl font-black">{props.value}</div>
-      <p className={classNames("mt-2 text-sm leading-6", props.tone === "dark" ? "text-white/75" : "text-stone-300")}>{props.description}</p>
-    </article>
+    <Card className={cn("overflow-hidden rounded-[24px]", toneClass)}>
+      <CardContent className="p-5">
+        <Eyebrow>{props.label}</Eyebrow>
+        <div className="mt-4 text-3xl font-semibold tracking-tight text-white">{props.value}</div>
+        <p className="mt-2 text-sm leading-6 text-slate-300">{props.description}</p>
+      </CardContent>
+    </Card>
   );
 }
 
-function Badge(props: { children: React.ReactNode; tone?: "neutral" | "dark" | "accent" | "warn" }) {
-  const toneClass =
-    props.tone === "dark"
-      ? "border border-teal/30 bg-teal/15 text-teal-100"
-      : props.tone === "accent"
-        ? "border border-teal/30 bg-teal/20 text-teal-100"
-        : props.tone === "warn"
-          ? "border border-amber-300/30 bg-amber-300/15 text-amber-100"
-          : "border border-white/10 bg-white/8 text-stone-200";
-
-  return <span className={classNames("rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]", toneClass)}>{props.children}</span>;
+function EmptyState(props: { message: string; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "rounded-[24px] border border-dashed border-white/10 bg-white/[0.035] px-4 py-5 text-sm leading-6 text-slate-300",
+        props.className,
+      )}
+    >
+      {props.message}
+    </div>
+  );
 }
 
-function Banner(props: { notice?: string; error?: string }) {
+function ListSection(props: { title: string; items: string[]; emptyMessage?: string }) {
   return (
-    <>
-      {props.notice ? <div className="mb-6 rounded-[1.7rem] border border-teal/25 bg-teal/15 px-5 py-4 text-sm text-teal-100">{props.notice}</div> : null}
-      {props.error ? <div className="mb-6 rounded-[1.7rem] border border-rose-400/25 bg-rose-400/10 px-5 py-4 text-sm text-rose-100">{props.error}</div> : null}
-    </>
+    <div className="space-y-3">
+      <Eyebrow>{props.title}</Eyebrow>
+      {props.items.length > 0 ? (
+        <div className="space-y-2">
+          {props.items.map((item, index) => (
+            <div key={`${props.title}-${index}`} className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm leading-6 text-slate-100">
+              {item}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState message={props.emptyMessage || "Belum ada item untuk bagian ini."} />
+      )}
+    </div>
+  );
+}
+
+function ProgressBar(props: { value: number }) {
+  const width = Math.max(8, Math.min(100, props.value));
+  return (
+    <div className="h-2 rounded-full bg-white/[0.06]">
+      <div
+        className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(56,189,248,0.95),rgba(134,239,172,0.92))]"
+        style={{ width: `${width}%` }}
+      />
+    </div>
+  );
+}
+
+function CodePanel(props: { title: string; content: string }) {
+  return (
+    <div className="overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/70">
+      <div className="border-b border-white/10 px-4 py-3 font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">{props.title}</div>
+      <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-6 text-slate-100">
+        <code>{props.content}</code>
+      </pre>
+    </div>
+  );
+}
+
+function FlashBanners(props: { notice?: string; error?: string }) {
+  return (
+    <div className="mb-6 space-y-3">
+      {props.notice ? (
+        <Alert variant="success">
+          <AlertTitle>Notice</AlertTitle>
+          <AlertDescription>{props.notice}</AlertDescription>
+        </Alert>
+      ) : null}
+      {props.error ? (
+        <Alert variant="danger">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{props.error}</AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  );
+}
+
+function getActiveNav(route: Route): "home" | "dashboard" | "history" {
+  if (route.kind === "dashboard") {
+    return "dashboard";
+  }
+
+  if (route.kind === "history" || route.kind === "run" || route.kind === "commit" || route.kind === "file") {
+    return "history";
+  }
+
+  return "home";
+}
+
+function NavigationLink(props: { href: string; label: string; active: boolean }) {
+  return (
+    <a
+      href={props.href}
+      className={cn(
+        "inline-flex h-10 items-center rounded-full px-4 text-sm font-medium transition",
+        props.active
+          ? "border border-cyan-300/28 bg-cyan-300/12 text-cyan-100"
+          : "border border-transparent text-slate-300 hover:border-white/10 hover:bg-white/[0.04] hover:text-white",
+      )}
+    >
+      {props.label}
+    </a>
   );
 }
 
 function Layout(props: {
   user: PublicGitHubUser | null;
   flash: FlashState;
+  route: Route;
   children: React.ReactNode;
 }) {
+  const activeNav = getActiveNav(props.route);
+
   return (
-    <div className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-      <header className="mb-8 flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-ink/75 px-6 py-5 shadow-panel backdrop-blur lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <a href="/" className="inline-flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.32em] text-teal-200">
-            <span className="rounded-full bg-teal px-3 py-1 text-[11px] text-ink">YiJiex</span>
-            AI Repo Analyzer
-          </a>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-300">
-            React dashboard untuk login GitHub, menyusun workspace repository, dan merangkum aktivitas coding dari private atau shared repo.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {props.user ? <a href="/dashboard" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-stone-100 transition hover:border-teal/40 hover:bg-white/10 hover:text-white">Dashboard</a> : null}
-          {props.user ? (
-            <>
-              <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white">
-                {props.user.avatarUrl ? <img src={props.user.avatarUrl} alt={props.user.username} className="h-8 w-8 rounded-full object-cover" /> : null}
-                <span>@{props.user.username}</span>
+    <div className="relative isolate min-h-screen overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-[-12rem] top-[-10rem] h-[30rem] w-[30rem] rounded-full bg-cyan-400/12 blur-3xl" />
+        <div className="absolute right-[-10rem] top-[6rem] h-[26rem] w-[26rem] rounded-full bg-indigo-500/14 blur-3xl" />
+        <div className="absolute bottom-[-10rem] left-[20%] h-[28rem] w-[28rem] rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:120px_120px] opacity-[0.13]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.15),transparent_34%),radial-gradient(circle_at_20%_20%,rgba(99,102,241,0.14),transparent_24%),linear-gradient(180deg,rgba(2,6,23,0.2),rgba(2,6,23,0.7))]" />
+      </div>
+
+      <div className="relative mx-auto max-w-7xl px-4 pb-12 pt-6 sm:px-6 lg:px-8">
+        <header className="sticky top-4 z-20 mb-8">
+          <Card className="overflow-hidden border-white/12 bg-[linear-gradient(180deg,rgba(9,18,33,0.96),rgba(5,10,22,0.92))]">
+            <CardContent className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <a href="/" className="inline-flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.34em] text-cyan-100">
+                  <span className="rounded-full border border-cyan-300/25 bg-cyan-300/14 px-3 py-1 text-[11px]">YiJiex</span>
+                  AI Repo Analyzer
+                </a>
+                <div className="hidden h-5 w-px bg-white/10 lg:block" />
+                <div className="text-xs uppercase tracking-[0.22em] text-slate-400">Workspace, analysis, dan history terpisah rapi</div>
               </div>
-              <a href="/logout" className="rounded-full bg-clay px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">
-                Logout
-              </a>
-            </>
-          ) : (
-            <a href="/auth/github" className="rounded-full bg-teal px-4 py-2 text-sm font-semibold text-ink transition hover:brightness-110">
-              Login GitHub
-            </a>
-          )}
-        </div>
-      </header>
-      <Banner notice={props.flash.notice} error={props.flash.error} />
-      {props.children}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <NavigationLink href="/" label="Home" active={activeNav === "home"} />
+                {props.user ? <NavigationLink href="/dashboard" label="Workspace" active={activeNav === "dashboard"} /> : null}
+                {props.user ? <NavigationLink href="/history" label="History" active={activeNav === "history"} /> : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                  {props.user?.avatarUrl ? (
+                    <img src={props.user.avatarUrl} alt={props.user.username} className="h-10 w-10 rounded-full object-cover ring-1 ring-white/10" />
+                  ) : (
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-300/12 text-sm font-semibold text-cyan-100">
+                      {getUserInitial(props.user)}
+                    </div>
+                  )}
+                  <div className="min-w-[7rem]">
+                    <div className="text-sm font-medium text-white">{props.user ? getUserDisplayName(props.user) : "Guest mode"}</div>
+                    <div className="text-xs uppercase tracking-[0.22em] text-slate-400">
+                      {props.user ? `@${props.user.username}` : "GitHub session"}
+                    </div>
+                  </div>
+                </div>
+                {props.user ? (
+                  <ActionLink href="/logout" variant="outline">
+                    Logout
+                  </ActionLink>
+                ) : (
+                  <ActionLink href="/auth/github" variant="default">
+                    Login GitHub
+                  </ActionLink>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </header>
+
+        <FlashBanners notice={props.flash.notice} error={props.flash.error} />
+        {props.children}
+      </div>
     </div>
   );
 }
@@ -301,60 +503,254 @@ function LandingPage(props: { user: PublicGitHubUser | null }) {
   useDocumentTitle("YiJiex AI Repo Analyzer");
 
   return (
-    <section className="grid gap-6 xl:grid-cols-[1.14fr_0.86fr]">
-      <article className="overflow-hidden rounded-[2.4rem] border border-white/10 bg-coal/75 p-8 shadow-panel backdrop-blur sm:p-10">
-        <p className="inline-flex rounded-full border border-teal/25 bg-teal/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-teal-100">GitHub Native</p>
-        <h1 className="mt-5 max-w-4xl text-4xl font-black leading-tight sm:text-5xl">
-          Workspace analisa repo yang fokus ke commit nyata, private repository, dan summary AI yang bisa dibaca cepat.
-        </h1>
-        <p className="mt-5 max-w-2xl text-base leading-7 text-stone-300">
-          Auth memakai GitHub OAuth, data repo diambil lewat Octokit, lalu hasil commit per tanggal dirangkum kembali oleh AI. Flow-nya dibuat seperti dashboard kerja, bukan form wizard.
-        </p>
-        <div className="mt-8 flex flex-wrap gap-3">
-          {props.user ? (
-            <a href="/dashboard" className="rounded-full bg-teal px-5 py-3 text-sm font-semibold text-ink transition hover:brightness-110">
-              Masuk ke Dashboard
-            </a>
-          ) : (
-            <a href="/auth/github" className="rounded-full bg-teal px-5 py-3 text-sm font-semibold text-ink transition hover:brightness-110">
-              Login dengan GitHub
-            </a>
-          )}
-        </div>
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
-          <StatCard label="1. OAuth" value="GitHub" description="Masuk dengan akun GitHub untuk membaca repo milik sendiri, organisasi, atau collaborator." />
-          <StatCard label="2. Workspace" value="Private + Shared" description="Centang repo yang ingin dijadikan workspace aktif lalu simpan ke akun Anda." />
-          <StatCard label="3. Insight" value="AI Summary" description="Buka ringkasan harian, commit patch, dan source file langsung dari browser." tone="accent" />
-        </div>
-      </article>
-      <div className="space-y-6">
-        <article className="rounded-[2rem] border border-white/10 bg-ink/85 p-8 text-white shadow-panel">
-          <h2 className="text-lg font-bold">Status Workspace</h2>
-          <dl className="mt-6 space-y-4 text-sm">
-            <div className="rounded-3xl bg-white/10 px-4 py-3">
-              <dt className="text-white/60">OAuth Config</dt>
-              <dd className="mt-1 font-semibold">Dibaca dari environment server</dd>
-            </div>
-            <div className="rounded-3xl bg-white/10 px-4 py-3">
-              <dt className="text-white/60">GitHub Session</dt>
-              <dd className="mt-1 font-semibold">{props.user ? `Login sebagai @${props.user.username}` : "Belum login"}</dd>
-            </div>
-            <div className="rounded-3xl bg-white/10 px-4 py-3">
-              <dt className="text-white/60">Repository Scope</dt>
-              <dd className="mt-1 font-semibold">Private, shared, dan organization repository ikut terbaca</dd>
-            </div>
-          </dl>
-        </article>
-        <article className="rounded-[2rem] border border-white/10 bg-coal/75 p-6 shadow-panel">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Yang Akan Anda Dapat</p>
-          <div className="mt-4 space-y-3 text-sm leading-6 text-stone-300">
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">Repo grid yang bisa difilter, disimpan, dan dianalisa langsung dari selection aktif.</div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">Histori run per user, jadi dashboard tiap akun tetap personal.</div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">Detail commit, patch file, dan source viewer tanpa pindah keluar dashboard.</div>
+    <section className="grid gap-6 xl:grid-cols-[1.16fr_0.84fr]">
+      <Card className="overflow-hidden border-cyan-300/12 bg-[linear-gradient(160deg,rgba(11,21,39,0.96),rgba(5,10,20,0.9))]">
+        <CardHeader className="space-y-4 p-8 sm:p-10">
+          <Badge className="w-fit">Shadcn Inspired</Badge>
+          <div className="space-y-4">
+            <Eyebrow>GitHub Workspace</Eyebrow>
+            <CardTitle className="max-w-4xl text-4xl font-semibold leading-tight sm:text-5xl">
+              Workspace GitHub dengan navbar jelas, selection repo yang ringan, dan history analisa yang dipisah ke halaman sendiri.
+            </CardTitle>
+            <CardDescription className="max-w-2xl text-base leading-8 text-slate-300">
+              Fokus halaman dibagi lebih masuk akal: workspace untuk memilih repo, history untuk melihat run yang pernah dibuat, dan detail page untuk menelusuri hasil analisa sampai patch file.
+            </CardDescription>
           </div>
-        </article>
+        </CardHeader>
+        <CardContent className="space-y-8 px-8 pb-8 sm:px-10 sm:pb-10">
+          <div className="flex flex-wrap gap-3">
+            {props.user ? (
+              <ActionLink href="/dashboard" size="lg">
+                Masuk ke Workspace
+              </ActionLink>
+            ) : (
+              <ActionLink href="/auth/github" size="lg">
+                Login dengan GitHub
+              </ActionLink>
+            )}
+            <ActionLink href="#workflow" variant="secondary" size="lg">
+              Lihat Workflow
+            </ActionLink>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <MetricCard
+              label="1. OAuth"
+              value="GitHub"
+              description="Masuk dengan akun GitHub dan pakai scope repo untuk membaca private, shared, dan organization repository."
+              tone="cool"
+            />
+            <MetricCard
+              label="2. Workspace"
+              value="Multi Select"
+              description="Pemilihan repo sekarang lebih natural lewat checkbox list, bukan klik satu-satu card besar."
+            />
+            <MetricCard
+              label="3. History"
+              value="Dedicated Page"
+              description="Run history dipisah dari dashboard supaya workspace tetap fokus ke proses memilih dan menjalankan analisa."
+              tone="highlight"
+            />
+          </div>
+
+          <div id="workflow" className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+              <Eyebrow>Workflow</Eyebrow>
+              <div className="mt-4 space-y-3 text-sm leading-7 text-slate-200">
+                <div className="rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-3">Login GitHub lalu buka workspace pribadi Anda.</div>
+                <div className="rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-3">Filter repository, centang lewat checkbox, lalu simpan workspace default jika perlu.</div>
+                <div className="rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-3">Jalankan analyze dari panel action terpisah dan buka history saat ingin meninjau run lama.</div>
+              </div>
+            </div>
+            <div className="rounded-[24px] border border-cyan-300/12 bg-[linear-gradient(180deg,rgba(6,20,39,0.78),rgba(2,8,16,0.78))] p-5">
+              <Eyebrow>Visual System</Eyebrow>
+              <div className="mt-4 space-y-3 text-sm leading-7 text-slate-200">
+                <div className="rounded-[20px] border border-white/10 bg-white/[0.05] px-4 py-3">Dark glossy tetap dipakai, tapi struktur halaman sekarang lebih tegas dan mudah dipindai.</div>
+                <div className="rounded-[20px] border border-white/10 bg-white/[0.05] px-4 py-3">Navbar dipasang permanen supaya perpindahan antar halaman utama terasa masuk akal.</div>
+                <div className="rounded-[20px] border border-white/10 bg-white/[0.05] px-4 py-3">Workspace, history, run detail, commit, dan file viewer dipisahkan sesuai fungsinya.</div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <Eyebrow>Status Workspace</Eyebrow>
+            <CardTitle className="text-2xl">Struktur halaman lebih jelas</CardTitle>
+            <CardDescription>State login, scope repository, dan entry point utama sekarang lebih mudah dipahami dari navbar dan panel ringkas ini.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+              <div className="text-xs uppercase tracking-[0.22em] text-slate-400">OAuth Config</div>
+              <div className="mt-2 text-sm font-medium text-white">Dibaca dari environment server</div>
+            </div>
+            <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+              <div className="text-xs uppercase tracking-[0.22em] text-slate-400">GitHub Session</div>
+              <div className="mt-2 text-sm font-medium text-white">
+                {props.user ? `Login sebagai @${props.user.username}` : "Belum login"}
+              </div>
+            </div>
+            <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+              <div className="text-xs uppercase tracking-[0.22em] text-slate-400">Main Pages</div>
+              <div className="mt-2 text-sm font-medium text-white">Home, Workspace, History, dan detail view terpisah</div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-indigo-400/12 bg-[linear-gradient(180deg,rgba(15,22,42,0.9),rgba(6,10,20,0.86))]">
+          <CardHeader>
+            <Eyebrow>What You Get</Eyebrow>
+            <CardTitle className="text-2xl">Alur kerja yang lebih wajar</CardTitle>
+            <CardDescription>Perubahan bukan cuma visual, tapi juga pemisahan tanggung jawab halaman utama.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Alert>
+              <AlertTitle>Workspace Selection</AlertTitle>
+              <AlertDescription>Daftar repo sekarang lebih ringan karena mengandalkan checkbox list dengan bulk action.</AlertDescription>
+            </Alert>
+            <Alert>
+              <AlertTitle>Dedicated History</AlertTitle>
+              <AlertDescription>Histori analisa dipindah ke halaman sendiri supaya dashboard tidak terasa sesak.</AlertDescription>
+            </Alert>
+            <Alert>
+              <AlertTitle>Deep Trace</AlertTitle>
+              <AlertDescription>Commit detail dan file viewer tetap memakai card glossy yang sama supaya perpindahan route tetap mulus.</AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
       </div>
     </section>
+  );
+}
+
+function RepositorySelectionTable(props: {
+  filteredRepositories: GitHubRepositoryOption[];
+  selectionSet: Set<string>;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onToggleRepository: (fullName: string) => void;
+  onSelectVisible: () => void;
+  onClearVisible: () => void;
+  onSaveWorkspace: () => void;
+  savingWorkspace: boolean;
+  pendingWorkspaceChanges: boolean;
+  selectedCount: number;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="gap-5 p-7">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="space-y-3">
+            <Eyebrow>Workspace Selection</Eyebrow>
+            <CardTitle className="text-2xl">Pilih repository lewat checkbox list</CardTitle>
+            <CardDescription>
+              Fokus halaman ini hanya untuk memilih repo dan menyimpan workspace. Tidak ada lagi card besar yang harus diklik satu per satu.
+            </CardDescription>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">{props.selectedCount} selected</Badge>
+            <Button variant="secondary" size="sm" onClick={props.onSelectVisible}>
+              Pilih visible
+            </Button>
+            <Button variant="secondary" size="sm" onClick={props.onClearVisible}>
+              Lepas visible
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={props.onSaveWorkspace}
+              disabled={props.savingWorkspace || !props.pendingWorkspaceChanges}
+            >
+              {props.savingWorkspace ? "Saving..." : "Save workspace"}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-6">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <label className="block space-y-2">
+            <span className="text-sm font-medium text-slate-200">Cari repository</span>
+            <Input value={props.search} onChange={(event) => props.onSearchChange(event.target.value)} placeholder="owner/repo" />
+          </label>
+          <div className="flex items-end">
+            <Badge variant="outline" className="h-11 px-4 text-xs">
+              {props.filteredRepositories.length} repo terlihat
+            </Badge>
+          </div>
+        </div>
+
+        {props.filteredRepositories.length > 0 ? (
+          <div className="overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25">
+            <div className="hidden items-center gap-4 border-b border-white/10 bg-white/[0.04] px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 md:grid md:grid-cols-[52px_minmax(0,2.1fr)_0.8fr_0.8fr_0.9fr_1fr]">
+              <div>Pilih</div>
+              <div>Repository</div>
+              <div>Visibility</div>
+              <div>Access</div>
+              <div>Permission</div>
+              <div>Updated</div>
+            </div>
+
+            <div className="max-h-[44rem] overflow-y-auto">
+              {props.filteredRepositories.map((repo, index) => {
+                const checked = props.selectionSet.has(repo.fullName);
+                return (
+                  <label
+                    key={repo.id}
+                    className={cn(
+                      "grid cursor-pointer gap-4 px-5 py-4 transition md:grid-cols-[52px_minmax(0,2.1fr)_0.8fr_0.8fr_0.9fr_1fr] md:items-center",
+                      index !== 0 ? "border-t border-white/10" : "",
+                      checked ? "bg-cyan-300/[0.07]" : "hover:bg-white/[0.04]",
+                    )}
+                  >
+                    <div className="flex items-start md:items-center">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => props.onToggleRepository(repo.fullName)}
+                        className="mt-1 h-4 w-4 rounded border-white/15 bg-slate-950/60 accent-cyan-300 md:mt-0"
+                      />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-white">{repo.fullName}</div>
+                      <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">{repo.owner}</div>
+                      {repo.description ? <p className="mt-2 text-sm leading-6 text-slate-300">{repo.description}</p> : null}
+                    </div>
+
+                    <div>
+                      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-slate-500 md:hidden">Visibility</div>
+                      <Badge variant={repoVisibilityVariant(repo.visibility)}>{repo.visibility}</Badge>
+                    </div>
+
+                    <div>
+                      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-slate-500 md:hidden">Access</div>
+                      <Badge variant={repoAccessVariant(repo.accessType)}>{repo.accessType}</Badge>
+                    </div>
+
+                    <div>
+                      <div className="mb-1 text-[11px] uppercase tracking-[0.18em] text-slate-500 md:hidden">Permission</div>
+                      <Badge variant={repoPermissionVariant(repo.permissionLevel)}>{repo.permissionLevel}</Badge>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 md:hidden">Updated</div>
+                      <div className="text-sm text-slate-300">{repo.updatedAt ? formatDateTime(repo.updatedAt) : "No update info"}</div>
+                      {repo.defaultBranch ? <Badge variant="outline">{repo.defaultBranch}</Badge> : null}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <EmptyState message="Tidak ada repository yang cocok dengan filter saat ini." />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -364,7 +760,7 @@ function DashboardPage(props: {
   const { data, setData, loading, error } = useRouteData<DashboardResponse>(
     "dashboard",
     () => requestJson<DashboardResponse>("/api/dashboard"),
-    "Dashboard",
+    "Workspace",
   );
   const [localError, setLocalError] = useState<string | null>(null);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
@@ -384,11 +780,11 @@ function DashboardPage(props: {
   }, [data]);
 
   if (loading) {
-    return <LoadingState title="Menyiapkan dashboard..." subtitle="Mengambil akses repository dan histori run dari server." />;
+    return <LoadingState title="Menyiapkan workspace..." subtitle="Mengambil akses repository dan pengaturan dashboard dari server." />;
   }
 
   if (error || !data) {
-    return <FailureState title="Dashboard gagal dimuat" message={error || "Data dashboard tidak tersedia."} />;
+    return <FailureState title="Workspace gagal dimuat" message={error || "Data dashboard tidak tersedia."} />;
   }
 
   const selectionSet = new Set(selectedRepositories);
@@ -405,6 +801,7 @@ function DashboardPage(props: {
     try {
       setSavingWorkspace(true);
       setLocalError(null);
+      setLocalNotice(null);
       const response = await requestJson<UpdateRepositoriesResponse>("/api/repositories/connect", {
         method: "POST",
         body: JSON.stringify({ repositories: selectedRepositories }),
@@ -425,6 +822,7 @@ function DashboardPage(props: {
         );
         props.onSessionUserChange(response.user);
       });
+
       setLocalNotice(
         selectedRepositories.length > 0
           ? `${selectedRepositories.length} repository tersimpan ke workspace Anda.`
@@ -441,6 +839,7 @@ function DashboardPage(props: {
     try {
       setRunningAnalysis(true);
       setLocalError(null);
+      setLocalNotice(null);
       const response = await requestJson<AnalyzeResponse>("/api/analyze", {
         method: "POST",
         body: JSON.stringify({
@@ -478,212 +877,172 @@ function DashboardPage(props: {
   }
 
   return (
-    <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
-      <div className="space-y-6">
-        <Banner notice={localNotice || undefined} error={localError || undefined} />
-        <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel backdrop-blur">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-            <div className="max-w-3xl">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">React Workspace</p>
-              <h1 className="mt-2 text-3xl font-black">Satu panel untuk connect, filter, lalu analyze repo GitHub</h1>
-              <p className="mt-3 text-sm leading-7 text-stone-300">
-                Checkbox di grid ini sekarang menjadi state utama. Anda bisa langsung analyze dari selection aktif, atau simpan dulu menjadi workspace permanen.
-              </p>
-            </div>
-            <div className="rounded-[1.5rem] border border-teal/20 bg-teal/12 px-4 py-3 text-sm text-teal-100">
-              Timezone report: <span className="font-semibold">{data.githubTimezone}</span> ({data.githubTimezoneOffset})
-            </div>
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            <StatCard label="Active Selection" value={selectedRepositories.length} description="Repo yang sedang aktif di panel saat ini." />
-            <StatCard label="Private Access" value={data.repositories.filter((repo) => repo.visibility === "private").length} description="Private repo yang terlihat dari akun GitHub Anda." />
-            <StatCard label="Shared Access" value={data.repositories.filter((repo) => repo.accessType === "shared").length} description="Repo collaborator atau organization yang ikut terbaca." tone="accent" />
-          </div>
-        </article>
+    <section className="space-y-6">
+      <FlashBanners notice={localNotice || undefined} error={localError || undefined} />
 
-        <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel backdrop-blur">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Run Analyzer</p>
-              <h2 className="mt-2 text-2xl font-black">Jalankan dari selection yang sedang aktif</h2>
-              <p className="mt-3 text-sm leading-7 text-stone-300">
-                Tidak perlu submit form terpisah. Selection repo di atas langsung dipakai oleh tombol analyze ini.
-              </p>
-            </div>
-            <Badge tone={data.groqReady ? "accent" : "warn"}>{data.groqReady ? "Groq Ready" : "Groq Missing"}</Badge>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-2">
-            {selectedRepositories.length > 0 ? (
-              selectedRepositories.map((repoName) => (
-                <Badge key={repoName} tone="dark">
-                  {repoName}
-                </Badge>
-              ))
-            ) : (
-              <p className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-stone-300">Belum ada repo terpilih. Centang repository di grid bawah dulu.</p>
-            )}
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-[220px_1fr_auto]">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-stone-200">Report Date</span>
-              <input
-                type="date"
-                value={reportDate}
-                onChange={(event) => setReportDate(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-ink/70 px-4 py-3 text-sm text-white outline-none transition focus:border-teal/50 focus:ring-2 focus:ring-teal/20"
-              />
-            </label>
-            <div className="rounded-[1.5rem] border border-white/10 bg-white/5 px-4 py-3 text-sm text-stone-300">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-300">Workspace State</div>
-              <p className="mt-2 leading-6">
-                {pendingWorkspaceChanges ? "Ada perubahan selection yang belum disimpan ke workspace." : "Selection aktif sudah sinkron dengan workspace yang tersimpan."}
-              </p>
-            </div>
-            <div className="flex items-end">
-              <button
-                type="button"
-                onClick={() => void handleAnalyze()}
-                disabled={!canAnalyze}
-                className={classNames(
-                  "w-full rounded-full border px-6 py-3 text-sm font-semibold transition shadow-[0_12px_40px_rgba(0,0,0,0.28)]",
-                  canAnalyze
-                    ? "border-teal/30 bg-teal text-ink hover:brightness-110"
-                    : "cursor-not-allowed border-white/10 bg-white/8 text-stone-400",
-                )}
-              >
-                {runningAnalysis ? "Analyzing..." : "Analyze Selection"}
-              </button>
-            </div>
-          </div>
-          {!data.groqReady ? <p className="mt-3 text-sm text-amber-200">Isi `GROQ_API_KEY` di environment server agar analisa bisa dijalankan.</p> : null}
-        </article>
-
-        <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel backdrop-blur">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Repository Access</p>
-              <h2 className="mt-2 text-2xl font-black">Pilih repo yang ingin dipakai</h2>
-              <p className="mt-3 text-sm leading-7 text-stone-300">
-                Filter daftar, centang repo yang dibutuhkan, lalu simpan workspace jika selection itu ingin dijadikan default akun Anda.
-              </p>
+      <Card className="overflow-hidden border-cyan-300/12">
+        <CardHeader className="gap-5 p-7">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-3xl space-y-3">
+              <Eyebrow>Workspace Overview</Eyebrow>
+              <CardTitle className="text-3xl">Dashboard ini sekarang fokus ke selection repo dan proses analyze</CardTitle>
+              <CardDescription className="text-sm leading-7">
+                History dipindah ke halaman sendiri. Di sini Anda hanya perlu filter repo, centang yang dibutuhkan, simpan workspace bila perlu, lalu jalankan analisa.
+              </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={selectVisible} className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-stone-100 transition hover:border-teal/40 hover:bg-white/10 hover:text-white">
-                Pilih Visible
-              </button>
-              <button type="button" onClick={clearVisible} className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-stone-100 transition hover:border-clay/60 hover:bg-white/10 hover:text-white">
-                Lepas Visible
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveWorkspace()}
-                disabled={savingWorkspace}
-                className={classNames(
-                  "rounded-full border px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition",
-                  savingWorkspace
-                    ? "border-white/10 bg-white/8 text-stone-400"
-                    : "border-teal/25 bg-teal text-ink hover:brightness-110",
+              <Badge>{data.githubTimezone}</Badge>
+              <Badge variant="outline">{data.githubTimezoneOffset}</Badge>
+              <Badge variant={data.groqReady ? "success" : "warning"}>{data.groqReady ? "Groq Ready" : "Groq Missing"}</Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-4">
+          <MetricCard
+            label="Selected"
+            value={selectedRepositories.length}
+            description="Repository aktif untuk run berikutnya."
+            tone="cool"
+          />
+          <MetricCard
+            label="Private Access"
+            value={data.repositories.filter((repo) => repo.visibility === "private").length}
+            description="Private repository yang terbaca dari akun GitHub Anda."
+          />
+          <MetricCard
+            label="Shared Access"
+            value={data.repositories.filter((repo) => repo.accessType === "shared").length}
+            description="Repo collaborator atau organization yang ikut muncul."
+          />
+          <MetricCard
+            label="Saved Runs"
+            value={data.recentRuns.length}
+            description="Jumlah run yang tersimpan dan bisa dibuka dari halaman history."
+            tone="highlight"
+          />
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_360px]">
+        <RepositorySelectionTable
+          filteredRepositories={filteredRepositories}
+          selectionSet={selectionSet}
+          search={search}
+          onSearchChange={setSearch}
+          onToggleRepository={toggleRepository}
+          onSelectVisible={selectVisible}
+          onClearVisible={clearVisible}
+          onSaveWorkspace={() => void handleSaveWorkspace()}
+          savingWorkspace={savingWorkspace}
+          pendingWorkspaceChanges={pendingWorkspaceChanges}
+          selectedCount={selectedRepositories.length}
+        />
+
+        <div className="space-y-6">
+          <Card className="overflow-hidden">
+            <CardHeader className="gap-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-3">
+                  <Eyebrow>Run Analyzer</Eyebrow>
+                  <CardTitle className="text-2xl">Action panel terpisah</CardTitle>
+                  <CardDescription>
+                    Pemilihan repo tidak lagi dicampur dengan action run. Bagian ini hanya untuk menentukan tanggal dan mengeksekusi analisa.
+                  </CardDescription>
+                </div>
+                <Badge variant={pendingWorkspaceChanges ? "warning" : "success"}>
+                  {pendingWorkspaceChanges ? "Workspace changed" : "Workspace synced"}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-slate-200">Report date</span>
+                <Input type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} />
+              </label>
+
+              <Alert>
+                <AlertTitle>Selection aktif</AlertTitle>
+                <AlertDescription>
+                  {selectedRepositories.length > 0
+                    ? `${selectedRepositories.length} repo siap dianalisa.`
+                    : "Belum ada repo terpilih. Centang repository pada daftar di sebelah kiri."}
+                </AlertDescription>
+              </Alert>
+
+              <div className="flex flex-wrap gap-2">
+                {selectedRepositories.length > 0 ? (
+                  selectedRepositories.slice(0, 6).map((repoName) => (
+                    <Badge key={repoName} variant="secondary">
+                      {repoName}
+                    </Badge>
+                  ))
+                ) : (
+                  <EmptyState message="Selection masih kosong." className="w-full" />
                 )}
-              >
-                {savingWorkspace ? "Saving..." : "Save Workspace"}
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_auto]">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-stone-200">Cari Repository</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="owner/repo"
-                className="w-full rounded-2xl border border-white/10 bg-ink/70 px-4 py-3 text-sm text-white outline-none transition focus:border-teal/50 focus:ring-2 focus:ring-teal/20"
-              />
-            </label>
-            <div className="flex items-end">
-              <div className="rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-3 text-sm text-stone-300">
-                {filteredRepositories.length} repo terlihat
+                {selectedRepositories.length > 6 ? <Badge variant="outline">+{selectedRepositories.length - 6} lainnya</Badge> : null}
               </div>
-            </div>
-          </div>
 
-          <div className="mt-6 grid max-h-[38rem] gap-3 overflow-y-auto rounded-[1.8rem] border border-white/10 bg-ink/45 p-4 md:grid-cols-2 xl:grid-cols-3">
-            {filteredRepositories.length > 0 ? (
-              filteredRepositories.map((repo) => {
-                const checked = selectionSet.has(repo.fullName);
-                return (
-                  <button
-                    key={repo.id}
-                    type="button"
-                    onClick={() => toggleRepository(repo.fullName)}
-                    className={classNames(
-                      "flex h-full flex-col justify-between rounded-[1.5rem] border p-4 text-left transition",
-                      checked
-                        ? "border-teal/50 bg-slate/85 shadow-lg shadow-black/30"
-                        : "border-white/10 bg-coal/75 hover:-translate-y-0.5 hover:border-teal/35 hover:bg-slate/70",
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-bold text-white">{repo.fullName}</div>
-                        {repo.description ? <p className="mt-1 text-xs leading-5 text-stone-300">{repo.description}</p> : null}
-                      </div>
-                      <div className={classNames("mt-1 h-5 w-5 rounded-full border-2", checked ? "border-teal bg-teal" : "border-white/20 bg-transparent")}>
-                        <div className={classNames("m-auto mt-[3px] h-2 w-2 rounded-full", checked ? "bg-ink" : "bg-transparent")} />
-                      </div>
-                    </div>
-                    <div className="mt-5 flex flex-wrap gap-2">
-                      <Badge tone={repo.visibility === "private" ? "warn" : "neutral"}>{repo.visibility}</Badge>
-                      <Badge tone={repo.accessType === "shared" ? "accent" : "dark"}>{repo.accessType}</Badge>
-                      <Badge tone={repo.permissionLevel === "admin" ? "dark" : repo.permissionLevel === "write" ? "accent" : "neutral"}>{repo.permissionLevel}</Badge>
-                      {repo.defaultBranch ? <Badge>{repo.defaultBranch}</Badge> : null}
-                    </div>
-                  </button>
-                );
-              })
-            ) : (
-              <div className="col-span-full rounded-[1.7rem] border border-dashed border-white/10 bg-white/5 p-6 text-sm text-stone-300">
-                Tidak ada repository yang cocok dengan filter saat ini.
+              <Button className="w-full" onClick={() => void handleAnalyze()} disabled={!canAnalyze}>
+                {runningAnalysis ? "Analyzing..." : "Analyze Selection"}
+              </Button>
+
+              {!data.groqReady ? (
+                <Alert variant="warning">
+                  <AlertTitle>GROQ_API_KEY belum tersedia</AlertTitle>
+                  <AlertDescription>Isi environment server agar tombol analyze bisa dijalankan.</AlertDescription>
+                </Alert>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden border-cyan-300/12">
+            <CardHeader>
+              <Eyebrow>Session</Eyebrow>
+              <CardTitle className="text-2xl">{getUserDisplayName(data.user)}</CardTitle>
+              <CardDescription>{data.user.email || data.user.profileUrl || "GitHub session aktif"}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+                <div className="text-xs uppercase tracking-[0.22em] text-slate-400">Connected workspace</div>
+                <div className="mt-2 text-sm font-medium text-white">{data.user.connectedRepositories.length} repo</div>
               </div>
-            )}
-          </div>
-        </article>
-      </div>
-
-      <div className="space-y-6">
-        <article className="rounded-[2.2rem] border border-white/10 bg-ink/85 p-7 text-white shadow-panel">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/60">Session</p>
-          <h2 className="mt-2 text-2xl font-black">{data.user.displayName || data.user.username}</h2>
-          <p className="mt-2 text-sm text-white/70">{data.user.email || data.user.profileUrl || "GitHub session aktif"}</p>
-          <div className="mt-5 grid gap-3 text-sm">
-            <div className="rounded-[1.4rem] bg-white/10 px-4 py-3">
-              <div className="text-white/60">Connected workspace</div>
-              <div className="mt-1 font-semibold">{data.user.connectedRepositories.length} repo</div>
-            </div>
-            <div className="rounded-[1.4rem] bg-white/10 px-4 py-3">
-              <div className="text-white/60">Groq model</div>
-              <div className="mt-1 font-semibold">{data.groqModel}</div>
-            </div>
-            <div className="rounded-[1.4rem] bg-white/10 px-4 py-3">
-              <div className="text-white/60">GitHub access</div>
-              <div className="mt-1 font-semibold">{data.repositories.length} repo terlihat</div>
-            </div>
-          </div>
-        </article>
-
-        <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Recent Runs</p>
-          <h2 className="mt-2 text-2xl font-black">Histori Analisa</h2>
-          <div className="mt-5 space-y-3">
-            {data.recentRuns.length > 0 ? (
-              data.recentRuns.map((run) => <RecentRunCard key={run.id} run={run} />)
-            ) : (
-              <div className="rounded-[1.6rem] border border-dashed border-white/10 bg-white/5 p-5 text-sm text-stone-300">
-                Belum ada histori analisa yang tersimpan untuk akun ini.
+              <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+                <div className="text-xs uppercase tracking-[0.22em] text-slate-400">Groq model</div>
+                <div className="mt-2 text-sm font-medium text-white">{data.groqModel}</div>
               </div>
-            )}
-          </div>
-        </article>
+              <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+                <div className="text-xs uppercase tracking-[0.22em] text-slate-400">GitHub access</div>
+                <div className="mt-2 text-sm font-medium text-white">{data.repositories.length} repo terlihat</div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden">
+            <CardHeader>
+              <Eyebrow>Run History</Eyebrow>
+              <CardTitle className="text-2xl">History dipindah ke halaman sendiri</CardTitle>
+              <CardDescription>
+                Dashboard tetap fokus. Gunakan halaman history untuk melihat semua run yang sudah pernah dibuat.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {data.recentRuns[0] ? (
+                <div className="rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-white">{data.recentRuns[0].reportDate}</div>
+                    <Badge>{data.recentRuns[0].productivityScore}/100</Badge>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-300">{data.recentRuns[0].overallSummary}</p>
+                </div>
+              ) : (
+                <EmptyState message="Belum ada run yang tersimpan." />
+              )}
+              <ActionLink href="/history" variant="secondary" className="w-full">
+                Buka History
+              </ActionLink>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </section>
   );
@@ -691,20 +1050,121 @@ function DashboardPage(props: {
 
 function RecentRunCard(props: { run: RecentRunSummary }) {
   return (
-    <a href={`/runs/${escapePathSegment(props.run.id)}`} className="block rounded-[1.6rem] border border-white/10 bg-white/5 p-4 transition hover:border-teal/35 hover:bg-white/10">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-bold text-white">{props.run.reportDate}</div>
-          <div className="mt-1 text-xs text-stone-400">
-            {props.run.repositoryFullNames.slice(0, 3).join(", ")}
-            {props.run.repositoryFullNames.length > 3 ? " ..." : ""}
+    <a
+      href={`/runs/${escapePathSegment(props.run.id)}`}
+      className="block rounded-[24px] border border-white/10 bg-white/[0.045] p-5 transition hover:border-cyan-300/25 hover:bg-white/[0.06]"
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-base font-semibold text-white">{props.run.reportDate}</div>
+            <Badge>{props.run.productivityScore}/100</Badge>
+            <Badge variant={confidenceVariant(props.run.confidence)}>{props.run.confidence}</Badge>
           </div>
+          <div className="text-xs leading-5 text-slate-400">{props.run.repositoryFullNames.join(", ")}</div>
+          <p className="text-sm leading-6 text-slate-200">{props.run.overallSummary}</p>
         </div>
-        <div className="rounded-full border border-teal/30 bg-teal/15 px-3 py-1 text-xs font-semibold text-teal-100">{props.run.productivityScore}/100</div>
+        <div className="w-full max-w-full space-y-3 lg:w-56">
+          <ProgressBar value={props.run.productivityScore} />
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">{formatDateTime(props.run.createdAt)}</div>
+        </div>
       </div>
-      <p className="mt-3 text-sm leading-6 text-stone-300">{props.run.overallSummary}</p>
-      <div className="mt-3 text-xs uppercase tracking-[0.2em] text-stone-500">{formatDateTime(props.run.createdAt)}</div>
     </a>
+  );
+}
+
+function HistoryPage() {
+  const { data, loading, error } = useRouteData<HistoryResponse>(
+    "history",
+    () => requestJson<HistoryResponse>("/api/history"),
+    "History",
+  );
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
+
+  if (loading) {
+    return <LoadingState title="Memuat history..." subtitle="Mengambil daftar run analisa yang tersimpan untuk akun ini." />;
+  }
+
+  if (error || !data) {
+    return <FailureState title="History gagal dimuat" message={error || "Data history tidak tersedia."} />;
+  }
+
+  const query = deferredSearch.trim().toLowerCase();
+  const filteredRuns = data.runs.filter((run) => {
+    const haystack = [run.reportDate, run.overallSummary, ...run.repositoryFullNames].join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+  const averageProductivity =
+    data.runs.length > 0 ? Math.round(data.runs.reduce((sum, run) => sum + run.productivityScore, 0) / data.runs.length) : 0;
+  const uniqueRepos = new Set(data.runs.flatMap((run) => run.repositoryFullNames));
+  const latestRun = data.runs[0];
+
+  return (
+    <section className="space-y-6">
+      <Card className="overflow-hidden border-cyan-300/12">
+        <CardHeader className="gap-5 p-7">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl space-y-3">
+              <Eyebrow>Run History</Eyebrow>
+              <CardTitle className="text-3xl">Semua hasil analisa dipindah ke halaman history khusus</CardTitle>
+              <CardDescription className="text-sm leading-7">
+                Halaman ini dipakai untuk meninjau run yang sudah pernah dibuat. Dashboard tidak lagi memaksakan list history di area workspace.
+              </CardDescription>
+            </div>
+            <ActionLink href="/dashboard" variant="secondary">
+              Kembali ke Workspace
+            </ActionLink>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-4">
+          <MetricCard label="Total Runs" value={data.runs.length} description="Jumlah seluruh run yang tersimpan untuk akun ini." tone="cool" />
+          <MetricCard label="Avg Score" value={averageProductivity} description="Rata-rata productivity score dari seluruh run." />
+          <MetricCard
+            label="Latest Report"
+            value={latestRun ? latestRun.reportDate : "-"}
+            description="Tanggal report terbaru yang tersimpan."
+          />
+          <MetricCard label="Unique Repos" value={uniqueRepos.size} description="Repository unik yang pernah ikut dianalisa." tone="highlight" />
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <CardHeader className="gap-5 p-7">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="space-y-3">
+              <Eyebrow>History List</Eyebrow>
+              <CardTitle className="text-2xl">Cari dan buka run lama</CardTitle>
+              <CardDescription>
+                Filter berdasarkan tanggal, repo, atau ringkasan singkat untuk menemukan run yang ingin Anda buka kembali.
+              </CardDescription>
+            </div>
+            <div className="w-full max-w-md">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-slate-200">Cari history</span>
+                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="tanggal, repo, atau summary" />
+              </label>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">{filteredRuns.length} run terlihat</Badge>
+            {latestRun ? <Badge variant="outline">Latest {latestRun.reportDate}</Badge> : null}
+          </div>
+
+          {filteredRuns.length > 0 ? (
+            <div className="space-y-3">
+              {filteredRuns.map((run) => (
+                <RecentRunCard key={run.id} run={run} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState message="Tidak ada history yang cocok dengan filter saat ini." />
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -727,92 +1187,193 @@ function RunDetailPage(props: { route: Extract<Route, { kind: "run" }> }) {
 
   return (
     <section className="space-y-6">
-      <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Run Detail</p>
-            <h1 className="mt-2 text-3xl font-black">{run.report.reportDate}</h1>
-            <p className="mt-4 text-base leading-7 text-stone-300">{run.report.overallSummary}</p>
+      <Card className="overflow-hidden border-cyan-300/12">
+        <CardHeader className="gap-6 p-7">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-3xl space-y-4">
+              <Eyebrow>Run Detail</Eyebrow>
+              <CardTitle className="text-4xl">{run.report.reportDate}</CardTitle>
+              <CardDescription className="text-base leading-8">{run.report.overallSummary}</CardDescription>
+              <div className="flex flex-wrap gap-2">
+                <Badge>{run.repositoryFullNames.length} repo</Badge>
+                <Badge variant="secondary">{run.collection.metrics.totalCommits} commit</Badge>
+                <Badge variant="outline">{formatDateTime(run.createdAt)}</Badge>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricCard
+                label="Productivity"
+                value={run.report.productivityScore}
+                description="Skor agregat dari run ini."
+                tone="cool"
+              />
+              <MetricCard
+                label="Confidence"
+                value={run.report.confidence}
+                description="Tingkat keyakinan model terhadap summary."
+                tone="highlight"
+              />
+            </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <StatCard label="Productivity" value={run.report.productivityScore} description="Skor agregat dari run ini." tone="dark" />
-            <StatCard label="Confidence" value={run.report.confidence} description="Tingkat keyakinan model terhadap summary." tone="accent" />
-          </div>
-        </div>
-      </article>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-4">
+          <MetricCard
+            label="Active Projects"
+            value={run.collection.metrics.activeProjectCount}
+            description="Project yang benar-benar punya aktivitas."
+          />
+          <MetricCard
+            label="Unique Files"
+            value={run.collection.metrics.uniqueFilesTouched}
+            description="File unik yang tersentuh oleh commit dan working tree."
+          />
+          <MetricCard
+            label="Dirty Repos"
+            value={run.collection.metrics.dirtyRepoCount}
+            description="Repo yang masih punya perubahan di working tree."
+          />
+          <MetricCard
+            label="Files Touched"
+            value={run.collection.metrics.totalCommittedFiles}
+            description="Total file yang muncul di commit hari ini."
+          />
+        </CardContent>
+      </Card>
 
-      <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel">
-          <h2 className="text-2xl font-black">Highlights</h2>
-          <div className="mt-5 grid gap-5 md:grid-cols-2">
+      <section className="grid gap-6 xl:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <Eyebrow>Highlights</Eyebrow>
+            <CardTitle className="text-2xl">Focus dan activity</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
             <ListSection title="Focus Areas" items={run.report.focusAreas} />
             <ListSection title="Activities" items={run.report.activities} />
-          </div>
-        </article>
+          </CardContent>
+        </Card>
 
-        <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel">
-          <h2 className="text-2xl font-black">Project Insights</h2>
-          <div className="mt-5 space-y-3">
-            {run.report.projectInsights.map((item) => (
-              <div key={`${item.project}-${item.summary}`} className="rounded-[1.6rem] border border-white/10 bg-white/5 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-bold text-white">{item.project}</div>
-                  <Badge>{item.status}</Badge>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-stone-300">{item.summary}</p>
-              </div>
-            ))}
-          </div>
-        </article>
+        <Card>
+          <CardHeader>
+            <Eyebrow>Delivery</Eyebrow>
+            <CardTitle className="text-2xl">Achievement dan improvement</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <ListSection title="Achievements" items={run.report.achievements} />
+            <ListSection title="Improvements" items={run.report.improvements} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <Eyebrow>Risk and Next</Eyebrow>
+            <CardTitle className="text-2xl">Blocker dan prioritas</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <ListSection title="Blockers" items={run.report.blockers} emptyMessage="Tidak ada blocker yang tercatat." />
+            <ListSection title="Next Priorities" items={run.report.nextPriorities} />
+          </CardContent>
+        </Card>
       </section>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Source Trace</p>
-            <h2 className="mt-2 text-2xl font-black">Commit yang membentuk report</h2>
-          </div>
-          <a href="/dashboard" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-stone-100 transition hover:border-teal/35 hover:bg-white/10 hover:text-white">
-            Kembali
-          </a>
-        </div>
-        {run.collection.repositories.map((repo) => {
-          const [owner, name] = repo.name.split("/");
-          return (
-            <article key={repo.name} className="rounded-[1.8rem] border border-white/10 bg-coal/70 p-5 shadow-panel">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="text-lg font-bold text-white">{repo.displayName || repo.name}</div>
-                  <div className="mt-1 text-sm text-stone-400">
-                    {repo.name} • {repo.commitsToday.length} commit • {repo.committedFilesToday.length} file touched
+      <Card>
+        <CardHeader>
+          <Eyebrow>Project Insights</Eyebrow>
+          <CardTitle className="text-2xl">Ringkasan per project</CardTitle>
+          <CardDescription>Status dan summary tiap project ditampilkan dalam panel yang lebih rapih.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {run.report.projectInsights.length > 0 ? (
+            run.report.projectInsights.map((item) => (
+              <div key={`${item.project}-${item.summary}`} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-2">
+                    <div className="text-base font-semibold text-white">{item.project}</div>
+                    <div className="text-sm leading-7 text-slate-300">{item.summary}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={insightVariant(item.status)}>{item.status}</Badge>
+                    <Badge variant="secondary">{item.commitCount} commit</Badge>
+                    <Badge variant="outline">{item.changedFilesCount} file</Badge>
                   </div>
                 </div>
-                <a href={repo.path} target="_blank" rel="noreferrer" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-stone-100 transition hover:border-teal/35 hover:bg-white/10 hover:text-white">
-                  Open Repo
-                </a>
               </div>
-              <div className="mt-4 space-y-3">
-                {repo.commitDetails.length > 0 ? (
-                  repo.commitDetails.map((commit) => (
-                    <a
-                      key={commit.hash}
-                      href={`/github/commit/${escapePathSegment(owner || "")}/${escapePathSegment(name || "")}/${escapePathSegment(commit.hash)}`}
-                      className="block rounded-[1.4rem] border border-white/10 bg-white/5 px-4 py-3 transition hover:border-teal/35 hover:bg-white/10"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-white">{commit.subject}</div>
-                        <div className="font-mono text-xs uppercase tracking-[0.2em] text-stone-400">{commit.shortHash}</div>
+            ))
+          ) : (
+            <EmptyState message="Belum ada project insight yang dihasilkan untuk run ini." />
+          )}
+        </CardContent>
+      </Card>
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <Eyebrow>Source Trace</Eyebrow>
+            <h2 className="mt-2 text-2xl font-semibold text-white">Commit yang membentuk report</h2>
+          </div>
+          <ActionLink href="/history" variant="outline">
+            Kembali ke History
+          </ActionLink>
+        </div>
+
+        <div className="space-y-4">
+          {run.collection.repositories.map((repo) => {
+            const [owner = "", name = ""] = repo.name.split("/");
+            return (
+              <Card key={repo.name} className="overflow-hidden">
+                <CardHeader className="gap-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-3">
+                      <div className="text-lg font-semibold text-white">{repo.displayName || repo.name}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="secondary">{repo.name}</Badge>
+                        <Badge variant="outline">{repo.commitsToday.length} commit</Badge>
+                        <Badge variant="outline">{repo.committedFilesToday.length} file touched</Badge>
+                        {repo.branch ? <Badge>{repo.branch}</Badge> : null}
+                        {repo.isDirty ? <Badge variant="warning">dirty working tree</Badge> : null}
                       </div>
-                      <div className="mt-2 text-xs text-stone-400">{formatDateTime(commit.committedAt)}</div>
-                    </a>
-                  ))
-                ) : (
-                  <div className="rounded-[1.4rem] border border-dashed border-white/10 px-4 py-3 text-sm text-stone-300">Tidak ada commit yang cocok pada tanggal ini.</div>
-                )}
-              </div>
-            </article>
-          );
-        })}
+                    </div>
+                    <ActionLink href={repo.path} target="_blank" rel="noreferrer" variant="secondary">
+                      Open Repo
+                    </ActionLink>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  {repo.errors.length > 0 ? (
+                    <Alert variant="warning">
+                      <AlertTitle>Repo warnings</AlertTitle>
+                      <AlertDescription>{repo.errors.join(" | ")}</AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {repo.commitDetails.length > 0 ? (
+                    <div className="space-y-3">
+                      {repo.commitDetails.map((commit) => (
+                        <a
+                          key={commit.hash}
+                          href={`/github/commit/${escapePathSegment(owner)}/${escapePathSegment(name)}/${escapePathSegment(commit.hash)}`}
+                          className="block rounded-[24px] border border-white/10 bg-white/[0.04] px-4 py-4 transition hover:border-cyan-300/20 hover:bg-white/[0.06]"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="text-sm font-semibold text-white">{commit.subject}</div>
+                              <div className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-400">{formatDateTime(commit.committedAt)}</div>
+                            </div>
+                            <Badge variant="secondary" className="w-fit">
+                              {commit.shortHash}
+                            </Badge>
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState message="Tidak ada commit yang cocok pada tanggal ini." />
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
       </section>
     </section>
   );
@@ -838,48 +1399,58 @@ function CommitDetailPage(props: { route: Extract<Route, { kind: "commit" }> }) 
   }
 
   const { detail } = data;
+  const totalChanges = detail.files.reduce((sum, file) => sum + file.changes, 0);
 
   return (
     <section className="space-y-6">
-      <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Commit Detail</p>
-            <h1 className="mt-2 text-3xl font-black">{detail.subject}</h1>
-            <p className="mt-3 text-sm text-stone-400">
-              {detail.owner}/{detail.repo} • {detail.shortSha} • {detail.author} • {formatDateTime(detail.committedAt)}
-            </p>
+      <Card className="overflow-hidden border-cyan-300/12">
+        <CardHeader className="gap-5 p-7">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl space-y-4">
+              <Eyebrow>Commit Detail</Eyebrow>
+              <CardTitle className="text-3xl">{detail.subject}</CardTitle>
+              <CardDescription className="text-sm leading-7">
+                {detail.owner}/{detail.repo} | {detail.shortSha} | {detail.author} | {formatDateTime(detail.committedAt)}
+              </CardDescription>
+              <div className="flex flex-wrap gap-2">
+                <Badge>{detail.files.length} file</Badge>
+                <Badge variant="secondary">{totalChanges} line change</Badge>
+                <Badge variant="outline">{detail.shortSha}</Badge>
+              </div>
+            </div>
+            <ActionLink href={detail.htmlUrl} target="_blank" rel="noreferrer" variant="secondary">
+              Open on GitHub
+            </ActionLink>
           </div>
-          <a href={detail.htmlUrl} target="_blank" rel="noreferrer" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-coal">
-            Open on GitHub
-          </a>
-        </div>
-      </article>
+        </CardHeader>
+      </Card>
 
       <div className="space-y-4">
         {detail.files.map((file) => (
-          <article key={file.fileName} className="rounded-[1.8rem] border border-white/10 bg-coal/70 p-5 shadow-panel">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <div className="text-base font-bold text-white">{file.fileName}</div>
-                <div className="mt-1 text-xs uppercase tracking-[0.2em] text-stone-400">
-                  {file.status || "modified"} • +{file.additions} -{file.deletions} • {file.changes} lines
+          <Card key={file.fileName} className="overflow-hidden">
+            <CardHeader className="gap-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-3">
+                  <div className="text-base font-semibold text-white">{file.fileName}</div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">{file.status || "modified"}</Badge>
+                    <Badge variant="outline">+{file.additions}</Badge>
+                    <Badge variant="outline">-{file.deletions}</Badge>
+                    <Badge variant="outline">{file.changes} lines</Badge>
+                  </div>
                 </div>
+                <ActionLink
+                  href={`/github/file?owner=${escapePathSegment(detail.owner)}&repo=${escapePathSegment(detail.repo)}&path=${escapePathSegment(file.fileName)}&ref=${escapePathSegment(detail.sha)}`}
+                  variant="outline"
+                >
+                  Lihat File
+                </ActionLink>
               </div>
-              <a
-                href={`/github/file?owner=${escapePathSegment(detail.owner)}&repo=${escapePathSegment(detail.repo)}&path=${escapePathSegment(file.fileName)}&ref=${escapePathSegment(detail.sha)}`}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-stone-100 transition hover:border-teal/35 hover:bg-white/10 hover:text-white"
-              >
-                Lihat File
-              </a>
-            </div>
-            <div className="mt-4 overflow-hidden rounded-[1.4rem] border border-white/10 bg-ink">
-              <div className="border-b border-white/10 px-4 py-3 font-mono text-xs uppercase tracking-[0.2em] text-white/60">Patch</div>
-              <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-6 text-stone-100">
-                <code>{file.patch || "GitHub tidak mengembalikan patch untuk file ini."}</code>
-              </pre>
-            </div>
-          </article>
+            </CardHeader>
+            <CardContent>
+              <CodePanel title="Patch" content={file.patch || "GitHub tidak mengembalikan patch untuk file ini."} />
+            </CardContent>
+          </Card>
         ))}
       </div>
     </section>
@@ -912,71 +1483,67 @@ function FileContentPage(props: { route: Extract<Route, { kind: "file" }> }) {
 
   return (
     <section className="space-y-6">
-      <article className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-7 shadow-panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">File Content</p>
-            <h1 className="mt-2 text-2xl font-black">{file.path}</h1>
-            <p className="mt-2 text-sm text-stone-400">
-              {file.owner}/{file.repo} • ref {file.ref}
-            </p>
+      <Card className="overflow-hidden border-cyan-300/12">
+        <CardHeader className="gap-4 p-7">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <Eyebrow>File Content</Eyebrow>
+              <CardTitle className="text-3xl">{file.path}</CardTitle>
+              <CardDescription>
+                {file.owner}/{file.repo} | ref {file.ref}
+              </CardDescription>
+            </div>
+            <ActionLink href={file.htmlUrl} target="_blank" rel="noreferrer" variant="secondary">
+              Open on GitHub
+            </ActionLink>
           </div>
-          <a href={file.htmlUrl} target="_blank" rel="noreferrer" className="rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-coal">
-            Open on GitHub
-          </a>
-        </div>
-      </article>
-      <article className="overflow-hidden rounded-[2rem] border border-white/10 bg-ink shadow-panel">
-        <div className="border-b border-white/10 px-5 py-4 font-mono text-xs uppercase tracking-[0.2em] text-white/60">Source</div>
-        <pre className="overflow-x-auto p-5 font-mono text-[13px] leading-6 text-stone-100">
-          <code>{file.content}</code>
-        </pre>
-      </article>
-    </section>
-  );
-}
+        </CardHeader>
+      </Card>
 
-function ListSection(props: { title: string; items: string[] }) {
-  return (
-    <div>
-      <div className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-300">{props.title}</div>
-      <ul className="mt-3 space-y-2 text-sm text-stone-200">
-        {props.items.length > 0 ? (
-          props.items.map((item, index) => (
-            <li key={`${props.title}-${index}`} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-              {item}
-            </li>
-          ))
-        ) : (
-          <li className="text-stone-500">-</li>
-        )}
-      </ul>
-    </div>
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <Eyebrow>Source Viewer</Eyebrow>
+          <CardTitle className="text-2xl">Snapshot file dari commit</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CodePanel title="Source" content={file.content} />
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
 function LoadingState(props: { title: string; subtitle: string }) {
   return (
-    <section className="rounded-[2.2rem] border border-white/10 bg-coal/75 p-10 shadow-panel">
-      <div className="inline-flex h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-teal" />
-      <h1 className="mt-6 text-3xl font-black">{props.title}</h1>
-      <p className="mt-3 max-w-2xl text-base leading-7 text-stone-300">{props.subtitle}</p>
-    </section>
+    <Card className="overflow-hidden">
+      <CardContent className="p-10">
+        <div className="inline-flex h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-cyan-300" />
+        <h1 className="mt-6 text-3xl font-semibold text-white">{props.title}</h1>
+        <p className="mt-3 max-w-2xl text-base leading-8 text-slate-300">{props.subtitle}</p>
+      </CardContent>
+    </Card>
   );
 }
 
 function FailureState(props: { title: string; message: string }) {
   return (
-    <section className="rounded-[2.2rem] border border-rose-400/25 bg-coal/80 p-10 shadow-panel">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-300">Error</p>
-      <h1 className="mt-2 text-3xl font-black">{props.title}</h1>
-      <p className="mt-4 max-w-2xl text-base leading-7 text-stone-300">{props.message}</p>
-      <div className="mt-8">
-        <a href="/" className="rounded-full bg-teal px-5 py-3 text-sm font-semibold text-ink transition hover:brightness-110">
-          Kembali ke Home
-        </a>
-      </div>
-    </section>
+    <Card className="overflow-hidden border-rose-300/16">
+      <CardContent className="space-y-6 p-10">
+        <Alert variant="danger">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{props.message}</AlertDescription>
+        </Alert>
+        <div>
+          <h1 className="text-3xl font-semibold text-white">{props.title}</h1>
+          <p className="mt-3 max-w-2xl text-base leading-8 text-slate-300">
+            Route ini tidak bisa ditampilkan sekarang. Kembali ke halaman utama lalu coba lagi.
+          </p>
+        </div>
+        <div>
+          <ActionLink href="/">Kembali ke Home</ActionLink>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1004,7 +1571,7 @@ function App() {
 
   if (loading) {
     return (
-      <Layout user={null} flash={sessionFlash}>
+      <Layout user={null} flash={sessionFlash} route={route}>
         <LoadingState title="Memeriksa session GitHub..." subtitle="Menunggu server memastikan apakah akun Anda sudah login." />
       </Layout>
     );
@@ -1012,7 +1579,7 @@ function App() {
 
   if (error || !session) {
     return (
-      <Layout user={null} flash={sessionFlash}>
+      <Layout user={null} flash={sessionFlash} route={route}>
         <FailureState title="Session gagal dibaca" message={error || "Server tidak mengembalikan data session."} />
       </Layout>
     );
@@ -1024,13 +1591,16 @@ function App() {
   };
 
   return (
-      <Layout user={user} flash={sessionFlash}>
+    <Layout user={user} flash={sessionFlash} route={route}>
       {route.kind === "home" ? <LandingPage user={user} /> : null}
       {route.kind === "dashboard" && user ? <DashboardPage onSessionUserChange={handleSessionUserChange} /> : null}
+      {route.kind === "history" && user ? <HistoryPage /> : null}
       {route.kind === "run" && user ? <RunDetailPage route={route} /> : null}
       {route.kind === "commit" && user ? <CommitDetailPage route={route} /> : null}
       {route.kind === "file" && user ? <FileContentPage route={route} /> : null}
-      {route.kind === "not_found" ? <FailureState title="Halaman tidak ditemukan" message="Route yang diminta belum tersedia di dashboard React ini." /> : null}
+      {route.kind === "not_found" ? (
+        <FailureState title="Halaman tidak ditemukan" message="Route yang diminta belum tersedia di dashboard ini." />
+      ) : null}
     </Layout>
   );
 }

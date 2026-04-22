@@ -40,6 +40,10 @@ export interface DashboardResponse {
   recentRuns: RecentRunSummary[];
 }
 
+export interface HistoryResponse {
+  runs: RecentRunSummary[];
+}
+
 export interface UpdateRepositoriesRequest {
   repositories: string[];
 }

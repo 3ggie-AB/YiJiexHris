@@ -287,6 +287,23 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/history",
+  requireAuthApi,
+  asyncRoute(async (req, res) => {
+    const currentUser = getCurrentUser(req);
+    if (!currentUser) {
+      res.status(401).json({ error: "Session GitHub tidak ditemukan." });
+      return;
+    }
+
+    const runs = await listRecentAnalysisRunsByUser(currentUser._id, 50);
+    res.json({
+      runs: runs.map(toRecentRunSummary),
+    });
+  }),
+);
+
 app.post(
   "/api/repositories/connect",
   requireAuthApi,
@@ -436,7 +453,7 @@ app.get(
 );
 
 app.get(
-  ["/dashboard", "/runs/:id", "/github/commit/:owner/:repo/:sha", "/github/file"],
+  ["/dashboard", "/history", "/runs/:id", "/github/commit/:owner/:repo/:sha", "/github/file"],
   requireAuthPage,
   asyncRoute(async (_req, res) => {
     loadWebDashboardConfig();
